@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://assets.s3.jdbnet.co.uk/logo/200x200.png" alt="JDB-NET" width="200" />
+  <img src="https://assets.jdbnet.co.uk/projects/ssh.png" alt="JDB-NET" width="200" />
   
   # JDB-NET SSH
 
