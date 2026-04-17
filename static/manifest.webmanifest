@@ -1,0 +1,24 @@
+{
+  "name": "SSH",
+  "short_name": "SSH",
+  "description": "Web-based SSH client",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#334155",
+  "theme_color": "#334155",
+  "icons": [
+    {
+      "src": "https://assets.jdbnet.co.uk/projects/ssh_maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://assets.jdbnet.co.uk/projects/ssh_maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

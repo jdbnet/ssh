@@ -1,0 +1,10 @@
+flask
+mysql-connector-python
+python-dotenv
+gunicorn
+gevent
+gevent-websocket
+simple-websocket
+paramiko
+cryptography
+werkzeug

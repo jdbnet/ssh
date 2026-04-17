@@ -1,0 +1,258 @@
+<script setup lang="ts">
+import { ref, watch } from "vue";
+import { api, type SftpEntry } from "@/api";
+
+const props = defineProps<{ connId: string }>();
+
+const path = ref("/");
+const entries = ref<SftpEntry[]>([]);
+const err = ref("");
+const busy = ref(false);
+const renameTarget = ref<SftpEntry | null>(null);
+const newName = ref("");
+
+function isDir(m: number): boolean {
+  return (m & 0o170000) === 0o040000;
+}
+
+function joinRemote(base: string, name: string): string {
+  if (base === "/") return `/${name}`.replace("//", "/");
+  return `${base.replace(/\/$/, "")}/${name}`;
+}
+
+async function load() {
+  err.value = "";
+  busy.value = true;
+  try {
+    const r = await api.sftpList(props.connId, path.value);
+    path.value = r.path;
+    entries.value = r.entries;
+  } catch (e) {
+    err.value = e instanceof Error ? e.message : "List failed";
+  } finally {
+    busy.value = false;
+  }
+}
+
+watch(
+  () => props.connId,
+  () => {
+    path.value = "/";
+    load();
+  },
+  { immediate: true },
+);
+
+function enter(e: SftpEntry) {
+  const p = joinRemote(path.value, e.filename);
+  if (isDir(e.st_mode)) {
+    path.value = p;
+    load();
+  }
+}
+
+function parent() {
+  if (path.value === "/") return;
+  const parts = path.value.replace(/\/$/, "").split("/");
+  parts.pop();
+  path.value = parts.length ? parts.join("/") || "/" : "/";
+  load();
+}
+
+async function onUpload(ev: Event) {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  err.value = "";
+  try {
+    await api.sftpUpload(props.connId, path.value, file);
+    await load();
+  } catch (e) {
+    err.value = e instanceof Error ? e.message : "Upload failed";
+  }
+}
+
+async function downloadFile(e: SftpEntry) {
+  const p = joinRemote(path.value, e.filename);
+  err.value = "";
+  try {
+    const res = await fetch(api.sftpDownloadUrl(props.connId, p), {
+      credentials: "include",
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = e.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    err.value = e instanceof Error ? e.message : "Download failed";
+  }
+}
+
+async function removeEntry(e: SftpEntry) {
+  if (!confirm(`Delete ${e.filename}?`)) return;
+  const p = joinRemote(path.value, e.filename);
+  err.value = "";
+  try {
+    await api.sftpRemove(props.connId, p);
+    await load();
+  } catch (err2) {
+    err.value = err2 instanceof Error ? err2.message : "Remove failed";
+  }
+}
+
+function startRename(e: SftpEntry) {
+  renameTarget.value = e;
+  newName.value = e.filename;
+}
+
+async function confirmRename() {
+  if (!renameTarget.value) return;
+  const oldP = joinRemote(path.value, renameTarget.value.filename);
+  const newP = joinRemote(path.value, newName.value.trim());
+  renameTarget.value = null;
+  err.value = "";
+  try {
+    await api.sftpRename(props.connId, oldP, newP);
+    await load();
+  } catch (e) {
+    err.value = e instanceof Error ? e.message : "Rename failed";
+  }
+}
+
+async function mkdir() {
+  const name = prompt("Folder name");
+  if (!name?.trim()) return;
+  const p = joinRemote(path.value, name.trim());
+  err.value = "";
+  try {
+    await api.sftpMkdir(props.connId, p);
+    await load();
+  } catch (e) {
+    err.value = e instanceof Error ? e.message : "mkdir failed";
+  }
+}
+
+function fmtSize(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+</script>
+
+<template>
+  <div class="flex min-h-0 flex-col bg-surface-raised font-sans text-sm">
+    <div class="border-b border-slate-800 px-3 py-2">
+      <div class="text-xs font-medium uppercase tracking-wide text-slate-500">
+        SFTP
+      </div>
+      <div class="mt-1 truncate font-mono text-xs text-slate-300" :title="path">
+        {{ path }}
+      </div>
+      <div class="mt-2 flex flex-wrap gap-1">
+        <button
+          type="button"
+          class="rounded bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700"
+          @click="parent"
+        >
+          Up
+        </button>
+        <button
+          type="button"
+          class="rounded bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700"
+          @click="load"
+        >
+          Refresh
+        </button>
+        <button
+          type="button"
+          class="rounded bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700"
+          @click="mkdir"
+        >
+          New folder
+        </button>
+        <label
+          class="cursor-pointer rounded bg-accent/20 px-2 py-1 text-xs text-accent hover:bg-accent/30"
+        >
+          Upload
+          <input type="file" class="hidden" @change="onUpload" />
+        </label>
+      </div>
+    </div>
+    <div class="min-h-0 flex-1 overflow-auto p-2">
+      <p v-if="err" class="mb-2 text-xs text-red-400">{{ err }}</p>
+      <p v-if="busy" class="text-xs text-slate-500">Loading…</p>
+      <ul v-else class="space-y-0.5">
+        <li
+          v-for="e in entries"
+          :key="e.filename"
+          class="group flex items-center gap-2 rounded px-2 py-1 hover:bg-surface-overlay"
+        >
+          <button
+            type="button"
+            class="min-w-0 flex-1 truncate text-left font-mono text-xs"
+            :class="isDir(e.st_mode) ? 'text-accent' : 'text-slate-200'"
+            @click="enter(e)"
+          >
+            {{ isDir(e.st_mode) ? "📁" : "📄" }} {{ e.filename }}
+          </button>
+          <span class="shrink-0 text-[10px] text-slate-500">{{
+            isDir(e.st_mode) ? "" : fmtSize(e.st_size)
+          }}</span>
+          <button
+            v-if="!isDir(e.st_mode)"
+            type="button"
+            class="shrink-0 text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 hover:text-accent"
+            @click="downloadFile(e)"
+          >
+            Get
+          </button>
+          <button
+            type="button"
+            class="shrink-0 text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 hover:text-accent"
+            @click="startRename(e)"
+          >
+            Ren
+          </button>
+          <button
+            type="button"
+            class="shrink-0 text-[10px] text-red-400/80 opacity-0 group-hover:opacity-100"
+            @click="removeEntry(e)"
+          >
+            Del
+          </button>
+        </li>
+      </ul>
+    </div>
+    <div
+      v-if="renameTarget"
+      class="border-t border-slate-800 p-2"
+    >
+      <input
+        v-model="newName"
+        class="mb-2 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1 font-mono text-xs"
+        @keyup.enter="confirmRename"
+      />
+      <div class="flex gap-2">
+        <button
+          type="button"
+          class="rounded bg-accent px-2 py-1 text-xs text-slate-950"
+          @click="confirmRename"
+        >
+          OK
+        </button>
+        <button
+          type="button"
+          class="rounded bg-slate-800 px-2 py-1 text-xs"
+          @click="renameTarget = null"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
