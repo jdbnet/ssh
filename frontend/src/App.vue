@@ -761,7 +761,7 @@ async function deleteIdentityRow(id: number) {
           required
           class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
         />
-        <label class="mt-3 block text-xs uppercase text-slate-500">Hostname</label>
+        <label class="mt-3 block text-xs uppercase text-slate-500">Hostname or IP</label>
         <input
           v-model="hostForm.hostname"
           required
@@ -873,7 +873,7 @@ async function deleteIdentityRow(id: number) {
           required
           class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
         >
-        <label class="mt-3 block text-xs uppercase text-slate-500">Hostname</label>
+        <label class="mt-3 block text-xs uppercase text-slate-500">Hostname or IP</label>
         <input
           v-model="editHostForm.hostname"
           required
