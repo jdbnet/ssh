@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
+import { File, Folder } from "lucide-vue-next";
 import { api, type SftpEntry } from "@/api";
 
 const props = defineProps<{ connId: string }>();
@@ -198,7 +199,19 @@ function fmtSize(n: number): string {
             :class="isDir(e.st_mode) ? 'text-accent' : 'text-slate-200'"
             @click="enter(e)"
           >
-            {{ isDir(e.st_mode) ? "📁" : "📄" }} {{ e.filename }}
+            <span class="inline-flex items-center gap-1.5">
+              <Folder
+                v-if="isDir(e.st_mode)"
+                class="h-3.5 w-3.5 shrink-0"
+                aria-hidden="true"
+              />
+              <File
+                v-else
+                class="h-3.5 w-3.5 shrink-0"
+                aria-hidden="true"
+              />
+              <span>{{ e.filename }}</span>
+            </span>
           </button>
           <span class="shrink-0 text-[10px] text-slate-500">{{
             isDir(e.st_mode) ? "" : fmtSize(e.st_size)

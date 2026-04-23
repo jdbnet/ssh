@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { Folder } from "lucide-vue-next";
 import {
   api,
   type HostRow,
@@ -463,7 +464,10 @@ async function deleteIdentityRow(id: number) {
                 class="min-w-0 flex-1 truncate text-left text-sm text-accent hover:underline"
                 @click="goToFolder(f.id)"
               >
-                📁 {{ f.label }}
+                <span class="inline-flex items-center gap-1.5">
+                  <Folder class="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>{{ f.label }}</span>
+                </span>
               </button>
               <button
                 type="button"
