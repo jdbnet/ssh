@@ -9,6 +9,8 @@ A modern, browser-based SSH workspace for managing remote access in one place.
 
 JDB-NET SSH gives you a clean web interface for opening secure shell sessions, organising hosts, and transferring files over SFTP without juggling multiple desktop tools. It is built for day-to-day server access with a fast tabbed terminal experience, reusable connection identities, and straightforward navigation for both occasional and frequent use.
 
+![Screenshot](img/screenshot.png)
+
 ## Features
 
 - Secure sign-in before accessing hosts and sessions
