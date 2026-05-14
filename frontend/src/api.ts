@@ -153,6 +153,25 @@ export const api = {
     return handle(res);
   },
 
+  async updateIdentity(
+    id: number,
+    body: Partial<{
+      label: string;
+      ssh_username: string;
+      password: string;
+      private_key: string;
+      key_passphrase: string;
+    }>,
+  ): Promise<void> {
+    const res = await fetch(`/api/identities/${id}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    });
+    await handle(res);
+  },
+
   async deleteIdentity(id: number): Promise<void> {
     const res = await fetch(`/api/identities/${id}`, {
       method: "DELETE",

@@ -37,6 +37,7 @@ const sidebarOpen = ref(true);
 let searchDebounceTimer = 0;
 
 const showIdentityForm = ref(false);
+const showEditIdentity = ref(false);
 const showHostForm = ref(false);
 const showFolderForm = ref(false);
 const showEditHost = ref(false);
@@ -48,6 +49,15 @@ const deleteIdentityErr = ref("");
 const deleteIdentityErrId = ref<number | null>(null);
 const newFolderLabel = ref("");
 const identityForm = ref({
+  label: "",
+  auth_type: "password" as "password" | "publickey",
+  ssh_username: "",
+  password: "",
+  private_key: "",
+  key_passphrase: "",
+});
+const editIdentityForm = ref({
+  id: 0,
   label: "",
   auth_type: "password" as "password" | "publickey",
   ssh_username: "",
@@ -217,6 +227,50 @@ async function submitIdentity() {
   await api.createIdentity(body);
   showIdentityForm.value = false;
   identityForm.value = {
+    label: "",
+    auth_type: "password",
+    ssh_username: "",
+    password: "",
+    private_key: "",
+    key_passphrase: "",
+  };
+  await refreshData();
+}
+
+async function openEditIdentity(i: IdentityRow) {
+  editIdentityForm.value = {
+    id: i.id,
+    label: i.label,
+    auth_type: i.auth_type,
+    ssh_username: "",
+    password: "",
+    private_key: "",
+    key_passphrase: "",
+  };
+  showEditIdentity.value = true;
+}
+
+async function submitEditIdentity() {
+  const f = editIdentityForm.value;
+  const body: Partial<{
+    label: string;
+    ssh_username: string;
+    password: string;
+    private_key: string;
+    key_passphrase: string;
+  }> = {
+    label: f.label.trim(),
+  };
+  if (f.ssh_username.trim()) body.ssh_username = f.ssh_username.trim();
+  if (f.auth_type === "password" && f.password) body.password = f.password;
+  else if (f.auth_type === "publickey") {
+    if (f.private_key) body.private_key = f.private_key;
+    if (f.key_passphrase !== undefined) body.key_passphrase = f.key_passphrase;
+  }
+  await api.updateIdentity(f.id, body);
+  showEditIdentity.value = false;
+  editIdentityForm.value = {
+    id: 0,
     label: "",
     auth_type: "password",
     ssh_username: "",
@@ -564,13 +618,22 @@ async function deleteIdentityRow(id: number) {
               class="flex items-center justify-between gap-1 py-0.5"
             >
               <span class="truncate">{{ i.label }} ({{ i.auth_type }})</span>
-              <button
-                type="button"
-                class="shrink-0 text-red-400/70 hover:underline"
-                @click="deleteIdentityRow(i.id)"
-              >
-                ×
-              </button>
+              <div class="flex gap-1">
+                <button
+                  type="button"
+                  class="shrink-0 text-slate-400/70 hover:text-slate-300 hover:underline"
+                  @click="openEditIdentity(i)"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  class="shrink-0 text-red-400/70 hover:underline"
+                  @click="deleteIdentityRow(i.id)"
+                >
+                  ×
+                </button>
+              </div>
             </li>
           </ul>
         </div>
@@ -751,6 +814,77 @@ async function deleteIdentityRow(id: number) {
             type="button"
             class="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-800"
             @click="showIdentityForm = false"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-slate-950"
+          >
+            Save
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <div
+      v-if="showEditIdentity"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      @click.self="showEditIdentity = false"
+    >
+      <form
+        class="max-h-[90vh] w-full max-w-lg overflow-auto rounded-xl border border-slate-800 bg-surface-raised p-6 shadow-xl"
+        @submit.prevent="submitEditIdentity"
+      >
+        <h2 class="text-lg font-semibold text-white">Edit identity</h2>
+        <label class="mt-4 block text-xs uppercase text-slate-500">Label</label>
+        <input
+          v-model="editIdentityForm.label"
+          required
+          class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+        />
+        <label class="mt-3 block text-xs uppercase text-slate-500">Auth type</label>
+        <div class="mt-1 rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm text-slate-400">
+          {{ editIdentityForm.auth_type }}
+        </div>
+        <p class="mt-1 text-[10px] text-slate-500">Auth type cannot be changed</p>
+        <label class="mt-3 block text-xs uppercase text-slate-500">SSH username</label>
+        <input
+          v-model="editIdentityForm.ssh_username"
+          placeholder="Leave empty to keep unchanged"
+          autocomplete="off"
+          class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+        />
+        <template v-if="editIdentityForm.auth_type === 'password'">
+          <label class="mt-3 block text-xs uppercase text-slate-500">Password (optional)</label>
+          <input
+            v-model="editIdentityForm.password"
+            type="password"
+            placeholder="Leave empty to keep current password"
+            class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+          />
+        </template>
+        <template v-else>
+          <label class="mt-3 block text-xs uppercase text-slate-500">Private key (PEM, optional)</label>
+          <textarea
+            v-model="editIdentityForm.private_key"
+            placeholder="Leave empty to keep current key"
+            rows="6"
+            class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 font-mono text-xs"
+          />
+          <label class="mt-3 block text-xs uppercase text-slate-500">Key passphrase (optional)</label>
+          <input
+            v-model="editIdentityForm.key_passphrase"
+            type="password"
+            placeholder="Leave empty to remove passphrase"
+            class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+          />
+        </template>
+        <div class="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-800"
+            @click="showEditIdentity = false"
           >
             Cancel
           </button>
