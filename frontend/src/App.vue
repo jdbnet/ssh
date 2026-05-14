@@ -688,7 +688,6 @@ async function deleteIdentityRow(id: number) {
     <div
       v-if="showAuditLog"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      @click.self="showAuditLog = false"
     >
       <div
         class="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-xl border border-slate-800 bg-surface-raised p-6 shadow-xl"
@@ -757,7 +756,6 @@ async function deleteIdentityRow(id: number) {
     <div
       v-if="showIdentityForm"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      @click.self="showIdentityForm = false"
     >
       <form
         class="max-h-[90vh] w-full max-w-lg overflow-auto rounded-xl border border-slate-800 bg-surface-raised p-6 shadow-xl"
@@ -830,7 +828,6 @@ async function deleteIdentityRow(id: number) {
     <div
       v-if="showEditIdentity"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      @click.self="showEditIdentity = false"
     >
       <form
         class="max-h-[90vh] w-full max-w-lg overflow-auto rounded-xl border border-slate-800 bg-surface-raised p-6 shadow-xl"
@@ -901,7 +898,6 @@ async function deleteIdentityRow(id: number) {
     <div
       v-if="showHostForm"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      @click.self="showHostForm = false"
     >
       <form
         class="w-full max-w-md rounded-xl border border-slate-800 bg-surface-raised p-6 shadow-xl"
@@ -979,7 +975,6 @@ async function deleteIdentityRow(id: number) {
     <div
       v-if="showFolderForm"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      @click.self="showFolderForm = false"
     >
       <form
         class="w-full max-w-sm rounded-xl border border-slate-800 bg-surface-raised p-6 shadow-xl"
@@ -1016,7 +1011,6 @@ async function deleteIdentityRow(id: number) {
     <div
       v-if="showEditHost"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      @click.self="showEditHost = false"
     >
       <form
         class="max-h-[90vh] w-full max-w-md overflow-auto rounded-xl border border-slate-800 bg-surface-raised p-6 shadow-xl"
