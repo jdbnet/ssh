@@ -1290,6 +1290,9 @@ def ws_terminal():
                         height=int(o.get("rows", 40)),
                     )
                     return True
+                elif o.get("type") == "ping":
+                    # Ping message to keep connection alive, ignore without sending to channel
+                    return True
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
             channel.send(msg.encode("utf-8"))

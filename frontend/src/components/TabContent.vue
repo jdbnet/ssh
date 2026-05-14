@@ -24,6 +24,7 @@ let ws: WebSocket | null = null;
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let ro: ResizeObserver | null = null;
+let pingInterval: NodeJS.Timeout | null = null;
 
 function wsUrl(hostId: number): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -86,6 +87,12 @@ onMounted(async () => {
   ws.onopen = () => {
     status.value = "Handshaking…";
     sendResize();
+    // Send ping every 60 seconds to keep connection alive
+    pingInterval = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "ping" }));
+      }
+    }, 60000);
   };
 
   ws.onmessage = (ev) => {
@@ -115,6 +122,10 @@ onMounted(async () => {
   };
 
   ws.onclose = () => {
+    if (pingInterval) {
+      clearInterval(pingInterval);
+      pingInterval = null;
+    }
     if (!connId.value) {
       status.value = "Disconnected";
     } else {
@@ -124,6 +135,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (pingInterval) {
+    clearInterval(pingInterval);
+    pingInterval = null;
+  }
   ro?.disconnect();
   ro = null;
   ws?.close();
