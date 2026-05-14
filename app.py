@@ -111,7 +111,7 @@ def init_db():
       label VARCHAR(255) NOT NULL,
       hostname VARCHAR(512) NOT NULL,
       port INT NOT NULL DEFAULT 22,
-      identity_id INT,
+      identity_id INT NULL,
       inline_identity_auth_type ENUM('password','publickey') NULL,
       inline_identity_encrypted_blob TEXT NULL,
       inline_identity_encrypted_key_passphrase TEXT NULL,
@@ -170,6 +170,21 @@ def _ensure_jump_host_schema(cur) -> None:
 
 def _ensure_inline_identity_schema(cur) -> None:
     """Migrate existing databases to support inline (one-time) credentials."""
+    # Check and modify identity_id to allow NULL
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ssh_hosts'
+          AND COLUMN_NAME = 'identity_id'
+          AND IS_NULLABLE = 'NO'
+        LIMIT 1
+        """
+    )
+    if cur.fetchone() is not None:
+        cur.execute("ALTER TABLE ssh_hosts MODIFY COLUMN identity_id INT NULL")
+    
     # Check and add inline_identity_auth_type column
     cur.execute(
         """
