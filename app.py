@@ -217,6 +217,22 @@ def _ensure_inline_identity_schema(cur) -> None:
         cur.execute(
             "ALTER TABLE ssh_hosts ADD COLUMN inline_identity_encrypted_key_passphrase TEXT NULL"
         )
+    
+    # Check and add last_connected_at column
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ssh_hosts'
+          AND COLUMN_NAME = 'last_connected_at'
+        LIMIT 1
+        """
+    )
+    if cur.fetchone() is None:
+        cur.execute(
+            "ALTER TABLE ssh_hosts ADD COLUMN last_connected_at TIMESTAMP NULL"
+        )
 
 
 def _like_escape(s: str) -> str:
@@ -582,7 +598,13 @@ def _insert_connection_audit(host_row: dict[str, Any]) -> int | None:
                     host_row.get("jump_host_id"),
                 ),
             )
-            return int(cur.lastrowid)
+            audit_id = int(cur.lastrowid)
+            # Update the host's last_connected_at timestamp
+            cur.execute(
+                "UPDATE ssh_hosts SET last_connected_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (int(host_row["id"]),),
+            )
+            return audit_id
     except Exception:
         log.exception("failed to insert connection audit row")
         return None
@@ -789,7 +811,7 @@ def delete_identity(iid: int):
 def _host_select_sql(extra_where: str = "") -> str:
     return f"""
             SELECT h.id, h.folder_id, h.label, h.hostname, h.port, h.identity_id, h.jump_host_id,
-                   h.created_at, h.updated_at,
+                   h.created_at, h.updated_at, h.last_connected_at,
                    COALESCE(i.label, 'One-time') AS identity_label, 
                    COALESCE(i.auth_type, h.inline_identity_auth_type) AS identity_auth_type,
                    pf.label AS folder_label,

@@ -31,6 +31,7 @@ const searchQuery = ref("");
 const tabs = ref<TabItem[]>([]);
 const activeTabId = ref<string | null>(null);
 const loadErr = ref("");
+const hostSortOrder = ref<"name" | "last_connected">("name");
 /** Narrow viewports: slide-over hosts panel; md+ sidebar stays visible */
 const sidebarOpen = ref(true);
 
@@ -108,6 +109,20 @@ function folderOptionLabel(id: number | null): string {
     cur = f.parent_id;
   }
   return parts.join(" / ") || `#${id}`;
+}
+
+function getSortedBrowseHosts(): HostRow[] {
+  const hosts = [...browseHosts.value];
+  if (hostSortOrder.value === "last_connected") {
+    // Sort by last_connected_at descending (most recent first), with never-connected at end
+    return hosts.sort((a, b) => {
+      const aTime = a.last_connected_at ? new Date(a.last_connected_at).getTime() : 0;
+      const bTime = b.last_connected_at ? new Date(b.last_connected_at).getTime() : 0;
+      return bTime - aTime;
+    });
+  }
+  // Sort alphabetically by label
+  return hosts.sort((a, b) => a.label.localeCompare(b.label));
 }
 
 async function refreshBrowse() {
@@ -599,9 +614,19 @@ async function deleteIdentityRow(id: number) {
               </button>
             </li>
           </ul>
+          <div v-if="browseHosts.length" class="mb-2 flex items-center justify-between">
+            <label class="text-xs text-slate-500 uppercase">Sort by:</label>
+            <select
+              v-model="hostSortOrder"
+              class="rounded border border-slate-700 bg-surface-overlay px-2 py-1 text-xs"
+            >
+              <option value="name">Name</option>
+              <option value="last_connected">Last connected</option>
+            </select>
+          </div>
           <ul class="space-y-1">
             <li
-              v-for="h in browseHosts"
+              v-for="h in getSortedBrowseHosts()"
               :key="'h' + h.id"
               class="rounded-lg border border-slate-800 bg-surface-overlay p-2"
             >

@@ -258,6 +258,7 @@ export interface HostRow {
   identity_label: string;
   identity_auth_type: string;
   folder_label?: string | null;
+  last_connected_at?: string | null;
 }
 
 export interface IdentityRow {
