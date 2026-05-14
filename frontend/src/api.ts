@@ -92,6 +92,22 @@ export const api = {
     await handle(res);
   },
 
+  async updateFolder(
+    id: number,
+    body: {
+      label?: string;
+      parent_id?: number | null;
+    },
+  ): Promise<void> {
+    const res = await fetch(`/api/folders/${id}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    });
+    await handle(res);
+  },
+
   async listIdentities(): Promise<IdentityRow[]> {
     const res = await fetch("/api/identities", { credentials: "include" });
     const d = await handle<{ items: IdentityRow[] }>(res);

@@ -50,6 +50,12 @@ const auditShowAll = ref(false);
 const deleteIdentityErr = ref("");
 const deleteIdentityErrId = ref<number | null>(null);
 const newFolderLabel = ref("");
+const showEditFolder = ref(false);
+const editFolderForm = ref({
+  id: 0,
+  label: "",
+  parent_id: null as number | null,
+});
 const identityForm = ref({
   label: "",
   auth_type: "password" as "password" | "publickey",
@@ -376,6 +382,25 @@ async function submitFolder() {
   await refreshBrowse();
 }
 
+function openEditFolder(f: FolderRow) {
+  editFolderForm.value = {
+    id: f.id,
+    label: f.label,
+    parent_id: f.parent_id,
+  };
+  showEditFolder.value = true;
+}
+
+async function submitEditFolder() {
+  const f = editFolderForm.value;
+  await api.updateFolder(f.id, {
+    label: f.label.trim(),
+    parent_id: f.parent_id,
+  });
+  showEditFolder.value = false;
+  await refreshBrowse();
+}
+
 function openEditHost(h: HostRow) {
   const hasInlineIdentity = h.identity_id === null;
   editHostForm.value = {
@@ -620,13 +645,24 @@ async function deleteIdentityRow(id: number) {
                   <span>{{ f.label }}</span>
                 </span>
               </button>
-              <button
-                type="button"
-                class="shrink-0 text-[10px] text-red-400/80 hover:underline"
-                @click="deleteFolderRow(f.id)"
-              >
-                Del
-              </button>
+              <div class="flex gap-1 shrink-0">
+                <button
+                  type="button"
+                  class="text-slate-400/70 hover:text-slate-300"
+                  title="Rename folder"
+                  @click="openEditFolder(f)"
+                >
+                  <Pencil class="h-3 w-3" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  class="text-red-400/70 hover:text-red-400"
+                  title="Delete folder"
+                  @click="deleteFolderRow(f.id)"
+                >
+                  <Trash2 class="h-3 w-3" aria-hidden="true" />
+                </button>
+              </div>
             </li>
           </ul>
           <div v-if="browseHosts.length" class="mb-2 flex items-center justify-between">
@@ -667,20 +703,22 @@ async function deleteIdentityRow(id: number) {
               >
                 {{ folderOptionLabel(h.folder_id) }}
               </p>
-              <div class="mt-1 flex gap-2">
+              <div class="mt-1 flex gap-1">
                 <button
                   type="button"
-                  class="text-[10px] text-slate-400 hover:text-white hover:underline"
+                  class="text-slate-400/70 hover:text-slate-300"
+                  title="Edit host"
                   @click="openEditHost(h)"
                 >
-                  Edit
+                  <Pencil class="h-3 w-3" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
-                  class="text-[10px] text-red-400/80 hover:underline"
+                  class="text-red-400/70 hover:text-red-400"
+                  title="Delete host"
                   @click="deleteHostRow(h.id)"
                 >
-                  Remove
+                  <Trash2 class="h-3 w-3" aria-hidden="true" />
                 </button>
               </div>
             </li>
@@ -1182,6 +1220,39 @@ async function deleteIdentityRow(id: number) {
             class="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-slate-950"
           >
             Create
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <div
+      v-if="showEditFolder"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+    >
+      <form
+        class="w-full max-w-sm rounded-xl border border-slate-800 bg-surface-raised p-6 shadow-xl"
+        @submit.prevent="submitEditFolder"
+      >
+        <h2 class="text-lg font-semibold text-white">Rename folder</h2>
+        <label class="mt-4 block text-xs uppercase text-slate-500">Name</label>
+        <input
+          v-model="editFolderForm.label"
+          required
+          class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+        >
+        <div class="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-800"
+            @click="showEditFolder = false"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-slate-950"
+          >
+            Save
           </button>
         </div>
       </form>
