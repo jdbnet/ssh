@@ -111,11 +111,14 @@ def init_db():
       label VARCHAR(255) NOT NULL,
       hostname VARCHAR(512) NOT NULL,
       port INT NOT NULL DEFAULT 22,
-      identity_id INT NOT NULL,
+      identity_id INT,
+      inline_identity_auth_type ENUM('password','publickey') NULL,
+      inline_identity_encrypted_blob TEXT NULL,
+      inline_identity_encrypted_key_passphrase TEXT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       CONSTRAINT fk_host_identity FOREIGN KEY (identity_id)
-        REFERENCES ssh_identities(id) ON DELETE RESTRICT,
+        REFERENCES ssh_identities(id) ON DELETE SET NULL,
       CONSTRAINT fk_host_folder FOREIGN KEY (folder_id)
         REFERENCES ssh_folders(id) ON DELETE SET NULL
     );
@@ -139,6 +142,7 @@ def init_db():
             if s:
                 cur.execute(s)
         _ensure_jump_host_schema(cur)
+        _ensure_inline_identity_schema(cur)
 
 
 def _ensure_jump_host_schema(cur) -> None:
@@ -161,6 +165,57 @@ def _ensure_jump_host_schema(cur) -> None:
             ADD CONSTRAINT fk_host_jump_host
             FOREIGN KEY (jump_host_id) REFERENCES ssh_hosts(id) ON DELETE SET NULL
             """
+        )
+
+
+def _ensure_inline_identity_schema(cur) -> None:
+    """Migrate existing databases to support inline (one-time) credentials."""
+    # Check and add inline_identity_auth_type column
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ssh_hosts'
+          AND COLUMN_NAME = 'inline_identity_auth_type'
+        LIMIT 1
+        """
+    )
+    if cur.fetchone() is None:
+        cur.execute(
+            "ALTER TABLE ssh_hosts ADD COLUMN inline_identity_auth_type ENUM('password','publickey') NULL"
+        )
+    
+    # Check and add inline_identity_encrypted_blob column
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ssh_hosts'
+          AND COLUMN_NAME = 'inline_identity_encrypted_blob'
+        LIMIT 1
+        """
+    )
+    if cur.fetchone() is None:
+        cur.execute(
+            "ALTER TABLE ssh_hosts ADD COLUMN inline_identity_encrypted_blob TEXT NULL"
+        )
+    
+    # Check and add inline_identity_encrypted_key_passphrase column
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ssh_hosts'
+          AND COLUMN_NAME = 'inline_identity_encrypted_key_passphrase'
+        LIMIT 1
+        """
+    )
+    if cur.fetchone() is None:
+        cur.execute(
+            "ALTER TABLE ssh_hosts ADD COLUMN inline_identity_encrypted_key_passphrase TEXT NULL"
         )
 
 
@@ -370,7 +425,21 @@ def _registry_count() -> int:
 
 
 def _connect_paramiko(host_row: dict, sock=None) -> tuple[paramiko.SSHClient, paramiko.Channel]:
-    payload = decrypt_secret(host_row["encrypted_blob"])
+    # Prefer inline identity if available, otherwise use saved identity
+    if host_row.get("inline_identity_encrypted_blob"):
+        # Use inline credentials
+        auth_type = host_row["inline_identity_auth_type"]
+        encrypted_blob = host_row["inline_identity_encrypted_blob"]
+        encrypted_key_passphrase = host_row.get("inline_identity_encrypted_key_passphrase")
+    else:
+        # Use saved identity
+        if not host_row.get("encrypted_blob"):
+            raise ValueError("host has no identity configured")
+        auth_type = host_row["auth_type"]
+        encrypted_blob = host_row["encrypted_blob"]
+        encrypted_key_passphrase = host_row.get("encrypted_key_passphrase")
+    
+    payload = decrypt_secret(encrypted_blob)
     data = json.loads(payload)
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -380,7 +449,7 @@ def _connect_paramiko(host_row: dict, sock=None) -> tuple[paramiko.SSHClient, pa
     if not username_ssh:
         raise ValueError("identity payload missing ssh_username")
 
-    if host_row["auth_type"] == "password":
+    if auth_type == "password":
         pwd = data.get("password")
         if not pwd:
             raise ValueError("missing password in identity")
@@ -400,8 +469,8 @@ def _connect_paramiko(host_row: dict, sock=None) -> tuple[paramiko.SSHClient, pa
             raise ValueError("missing private_key in identity")
         pkey = None
         key_pass = None
-        if host_row.get("encrypted_key_passphrase"):
-            key_pass = decrypt_secret(host_row["encrypted_key_passphrase"]) or None
+        if encrypted_key_passphrase:
+            key_pass = decrypt_secret(encrypted_key_passphrase) or None
         last_err: Exception | None = None
         key_classes: list[type] = [
             paramiko.RSAKey,
@@ -446,9 +515,10 @@ def _load_host_connect_row(cur, host_id: int) -> dict[str, Any] | None:
     cur.execute(
         """
         SELECT h.id, h.label, h.hostname, h.port, h.identity_id, h.jump_host_id,
+               h.inline_identity_auth_type, h.inline_identity_encrypted_blob, h.inline_identity_encrypted_key_passphrase,
                i.auth_type, i.encrypted_blob, i.encrypted_key_passphrase
         FROM ssh_hosts h
-        JOIN ssh_identities i ON i.id = h.identity_id
+        LEFT JOIN ssh_identities i ON i.id = h.identity_id
         WHERE h.id = %s
         """,
         (host_id,),
@@ -720,11 +790,12 @@ def _host_select_sql(extra_where: str = "") -> str:
     return f"""
             SELECT h.id, h.folder_id, h.label, h.hostname, h.port, h.identity_id, h.jump_host_id,
                    h.created_at, h.updated_at,
-                   i.label AS identity_label, i.auth_type AS identity_auth_type,
+                   COALESCE(i.label, 'One-time') AS identity_label, 
+                   COALESCE(i.auth_type, h.inline_identity_auth_type) AS identity_auth_type,
                    pf.label AS folder_label,
                    jh.label AS jump_host_label
             FROM ssh_hosts h
-            JOIN ssh_identities i ON i.id = h.identity_id
+            LEFT JOIN ssh_identities i ON i.id = h.identity_id
             LEFT JOIN ssh_folders pf ON pf.id = h.folder_id
             LEFT JOIN ssh_hosts jh ON jh.id = h.jump_host_id
             {extra_where}
@@ -917,11 +988,47 @@ def create_host():
     label = (body.get("label") or "").strip()
     hostname = (body.get("hostname") or "").strip()
     port = int(body.get("port") or 22)
+    use_inline = body.get("use_inline_identity", False)
     identity_id = body.get("identity_id")
     jump_host_raw = body.get("jump_host_id")
     jump_host_id = int(jump_host_raw) if jump_host_raw is not None and jump_host_raw != "" else None
-    if not label or not hostname or not identity_id:
-        return jsonify({"error": "label, hostname, identity_id required"}), 400
+    
+    if not label or not hostname:
+        return jsonify({"error": "label, hostname required"}), 400
+    
+    # Validate identity or inline credentials
+    inline_auth_type = None
+    inline_blob = None
+    inline_key_pass = None
+    
+    if use_inline:
+        # Use inline credentials
+        auth_type = body.get("auth_type")
+        ssh_username = (body.get("ssh_username") or "").strip()
+        if not auth_type or auth_type not in ("password", "publickey") or not ssh_username:
+            return jsonify({"error": "auth_type and ssh_username required for inline identity"}), 400
+        
+        if auth_type == "password":
+            password = body.get("password")
+            if not password:
+                return jsonify({"error": "password required"}), 400
+            payload = json.dumps({"ssh_username": ssh_username, "password": password})
+        else:
+            private_key = body.get("private_key")
+            if not private_key or not isinstance(private_key, str):
+                return jsonify({"error": "private_key required"}), 400
+            key_pass_plain = body.get("key_passphrase")
+            payload = json.dumps({"ssh_username": ssh_username, "private_key": private_key})
+            inline_key_pass = encrypt_secret(key_pass_plain) if key_pass_plain else None
+        
+        inline_auth_type = auth_type
+        inline_blob = encrypt_secret(payload)
+        identity_id = None
+    else:
+        # Use saved identity
+        if not identity_id:
+            return jsonify({"error": "identity_id required when not using inline identity"}), 400
+    
     fid = body.get("folder_id")
     folder_id = int(fid) if fid is not None and fid != "" else None
     if folder_id is not None:
@@ -929,17 +1036,24 @@ def create_host():
             cur.execute("SELECT id FROM ssh_folders WHERE id = %s", (folder_id,))
             if not cur.fetchone():
                 return jsonify({"error": "folder not found"}), 400
+    
     with db_cursor() as (_, cur):
         if jump_host_id is not None:
             cur.execute("SELECT id FROM ssh_hosts WHERE id = %s", (jump_host_id,))
             if not cur.fetchone():
                 return jsonify({"error": "jump host not found"}), 400
+        
+        if identity_id:
+            identity_id = int(identity_id)
+        
         cur.execute(
             """
-            INSERT INTO ssh_hosts (folder_id, label, hostname, port, identity_id, jump_host_id)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO ssh_hosts (folder_id, label, hostname, port, identity_id, jump_host_id,
+                                   inline_identity_auth_type, inline_identity_encrypted_blob, inline_identity_encrypted_key_passphrase)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (folder_id, label, hostname, port, int(identity_id), jump_host_id),
+            (folder_id, label, hostname, port, identity_id, jump_host_id,
+             inline_auth_type, inline_blob, inline_key_pass),
         )
         hid = cur.lastrowid
     return jsonify({"id": hid}), 201
@@ -951,6 +1065,53 @@ def update_host(hid: int):
     body = request.get_json(silent=True) or {}
     fields = []
     args: list[Any] = []
+    
+    # Handle inline identity switching
+    if "use_inline_identity" in body:
+        use_inline = body.get("use_inline_identity", False)
+        if use_inline:
+            # Switch to inline credentials
+            auth_type = body.get("auth_type")
+            ssh_username = (body.get("ssh_username") or "").strip()
+            if not auth_type or auth_type not in ("password", "publickey") or not ssh_username:
+                return jsonify({"error": "auth_type and ssh_username required for inline identity"}), 400
+            
+            if auth_type == "password":
+                password = body.get("password")
+                if not password:
+                    return jsonify({"error": "password required"}), 400
+                payload = json.dumps({"ssh_username": ssh_username, "password": password})
+            else:
+                private_key = body.get("private_key")
+                if not private_key or not isinstance(private_key, str):
+                    return jsonify({"error": "private_key required"}), 400
+                key_pass_plain = body.get("key_passphrase")
+                payload = json.dumps({"ssh_username": ssh_username, "private_key": private_key})
+                inline_key_pass = encrypt_secret(key_pass_plain) if key_pass_plain else None
+            
+            # Clear identity_id and set inline fields
+            fields.append("identity_id = %s")
+            args.append(None)
+            fields.append("inline_identity_auth_type = %s")
+            args.append(auth_type)
+            fields.append("inline_identity_encrypted_blob = %s")
+            args.append(encrypt_secret(payload))
+            fields.append("inline_identity_encrypted_key_passphrase = %s")
+            if auth_type == "password":
+                args.append(None)
+            else:
+                args.append(inline_key_pass)
+        else:
+            # Switch to saved identity - clear inline fields
+            fields.append("identity_id = %s")
+            args.append(body.get("identity_id"))
+            fields.append("inline_identity_auth_type = %s")
+            args.append(None)
+            fields.append("inline_identity_encrypted_blob = %s")
+            args.append(None)
+            fields.append("inline_identity_encrypted_key_passphrase = %s")
+            args.append(None)
+    
     if "label" in body:
         fields.append("label = %s")
         args.append(str(body["label"]).strip())
@@ -960,7 +1121,7 @@ def update_host(hid: int):
     if "port" in body:
         fields.append("port = %s")
         args.append(int(body["port"]))
-    if "identity_id" in body:
+    if "identity_id" in body and "use_inline_identity" not in body:
         fields.append("identity_id = %s")
         args.append(int(body["identity_id"]))
     if "jump_host_id" in body:

@@ -98,14 +98,7 @@ export const api = {
     return d.items;
   },
 
-  async createHost(body: {
-    label: string;
-    hostname: string;
-    port?: number;
-    identity_id: number;
-    folder_id?: number | null;
-    jump_host_id?: number | null;
-  }): Promise<{ id: number }> {
+  async createHost(body: Record<string, unknown>): Promise<{ id: number }> {
     const res = await fetch("/api/hosts", {
       method: "POST",
       credentials: "include",
@@ -117,14 +110,7 @@ export const api = {
 
   async patchHost(
     id: number,
-    body: Partial<{
-      label: string;
-      hostname: string;
-      port: number;
-      identity_id: number;
-      folder_id: number | null;
-      jump_host_id: number | null;
-    }>,
+    body: Record<string, unknown>,
   ): Promise<void> {
     const res = await fetch(`/api/hosts/${id}`, {
       method: "PATCH",

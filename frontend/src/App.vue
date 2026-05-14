@@ -69,7 +69,13 @@ const hostForm = ref({
   label: "",
   hostname: "",
   port: 22,
+  use_inline_identity: false,
   identity_id: 0 as number,
+  auth_type: "password" as "password" | "publickey",
+  ssh_username: "",
+  password: "",
+  private_key: "",
+  key_passphrase: "",
   jump_host_id: null as number | null,
 });
 const editHostForm = ref({
@@ -77,7 +83,13 @@ const editHostForm = ref({
   label: "",
   hostname: "",
   port: 22,
+  use_inline_identity: false,
   identity_id: 0,
+  auth_type: "password" as "password" | "publickey",
+  ssh_username: "",
+  password: "",
+  private_key: "",
+  key_passphrase: "",
   folder_id: null as number | null,
   jump_host_id: null as number | null,
 });
@@ -283,20 +295,43 @@ async function submitEditIdentity() {
 
 async function submitHost() {
   const f = hostForm.value;
-  await api.createHost({
+  const body: Record<string, unknown> = {
     label: f.label.trim(),
     hostname: f.hostname.trim(),
     port: Number(f.port) || 22,
-    identity_id: f.identity_id,
     folder_id: currentFolderId.value,
     jump_host_id: f.jump_host_id,
-  });
+  };
+  
+  if (f.use_inline_identity) {
+    body.use_inline_identity = true;
+    body.auth_type = f.auth_type;
+    body.ssh_username = f.ssh_username.trim();
+    if (f.auth_type === "password") {
+      body.password = f.password;
+    } else {
+      body.private_key = f.private_key;
+      if (f.key_passphrase) {
+        body.key_passphrase = f.key_passphrase;
+      }
+    }
+  } else {
+    body.identity_id = f.identity_id;
+  }
+  
+  await api.createHost(body);
   showHostForm.value = false;
   hostForm.value = {
     label: "",
     hostname: "",
     port: 22,
+    use_inline_identity: false,
     identity_id: hostForm.value.identity_id,
+    auth_type: "password",
+    ssh_username: "",
+    password: "",
+    private_key: "",
+    key_passphrase: "",
     jump_host_id: null,
   };
   await refreshData();
@@ -312,12 +347,19 @@ async function submitFolder() {
 }
 
 function openEditHost(h: HostRow) {
+  const hasInlineIdentity = h.identity_id === null;
   editHostForm.value = {
     id: h.id,
     label: h.label,
     hostname: h.hostname,
     port: h.port,
-    identity_id: h.identity_id,
+    use_inline_identity: hasInlineIdentity,
+    identity_id: h.identity_id || 0,
+    auth_type: (h.identity_auth_type as "password" | "publickey") || "password",
+    ssh_username: "",
+    password: "",
+    private_key: "",
+    key_passphrase: "",
     folder_id: h.folder_id,
     jump_host_id: h.jump_host_id,
   };
@@ -326,14 +368,31 @@ function openEditHost(h: HostRow) {
 
 async function submitEditHost() {
   const f = editHostForm.value;
-  await api.patchHost(f.id, {
+  const body: Record<string, unknown> = {
     label: f.label.trim(),
     hostname: f.hostname.trim(),
     port: Number(f.port) || 22,
-    identity_id: f.identity_id,
     folder_id: f.folder_id,
     jump_host_id: f.jump_host_id,
-  });
+  };
+  
+  if (f.use_inline_identity) {
+    body.use_inline_identity = true;
+    body.auth_type = f.auth_type;
+    body.ssh_username = f.ssh_username.trim();
+    if (f.auth_type === "password") {
+      body.password = f.password;
+    } else {
+      body.private_key = f.private_key;
+      if (f.key_passphrase) {
+        body.key_passphrase = f.key_passphrase;
+      }
+    }
+  } else {
+    body.identity_id = f.identity_id;
+  }
+  
+  await api.patchHost(f.id, body);
   showEditHost.value = false;
   allHosts.value = await api.listHosts();
   await refreshBrowse();
@@ -927,16 +986,84 @@ async function deleteIdentityRow(id: number) {
           max="65535"
           class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
         />
-        <label class="mt-3 block text-xs uppercase text-slate-500">Identity</label>
-        <select
-          v-model.number="hostForm.identity_id"
-          required
-          class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
-        >
-          <option v-for="i in identities" :key="i.id" :value="i.id">
-            {{ i.label }} ({{ i.auth_type }})
-          </option>
-        </select>
+        <label class="mt-3 block text-xs uppercase text-slate-500">Credentials</label>
+        <div class="mt-1 flex gap-2">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              :checked="!hostForm.use_inline_identity"
+              @change="hostForm.use_inline_identity = false"
+              class="w-4 h-4"
+            />
+            <span class="text-sm">Saved identity</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              :checked="hostForm.use_inline_identity"
+              @change="hostForm.use_inline_identity = true"
+              class="w-4 h-4"
+            />
+            <span class="text-sm">One-time</span>
+          </label>
+        </div>
+        <div v-if="!hostForm.use_inline_identity" class="mt-3">
+          <label class="block text-xs uppercase text-slate-500">Identity</label>
+          <select
+            v-model.number="hostForm.identity_id"
+            required
+            class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+          >
+            <option v-for="i in identities" :key="i.id" :value="i.id">
+              {{ i.label }} ({{ i.auth_type }})
+            </option>
+          </select>
+        </div>
+        <div v-else class="mt-3 space-y-3">
+          <div>
+            <label class="block text-xs uppercase text-slate-500">Auth type</label>
+            <select
+              v-model="hostForm.auth_type"
+              class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+            >
+              <option value="password">Password</option>
+              <option value="publickey">Public key</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs uppercase text-slate-500">SSH username</label>
+            <input
+              v-model="hostForm.ssh_username"
+              required
+              class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div v-if="hostForm.auth_type === 'password'">
+            <label class="block text-xs uppercase text-slate-500">Password</label>
+            <input
+              v-model="hostForm.password"
+              type="password"
+              required
+              class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div v-else>
+            <label class="block text-xs uppercase text-slate-500">Private key</label>
+            <textarea
+              v-model="hostForm.private_key"
+              required
+              rows="4"
+              class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm font-mono text-xs"
+              placeholder="-----BEGIN PRIVATE KEY-----"
+            />
+            <label class="mt-2 block text-xs uppercase text-slate-500">Key passphrase (optional)</label>
+            <input
+              v-model="hostForm.key_passphrase"
+              type="password"
+              class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+            />
+          </div>
+        </div>
         <label class="mt-3 block text-xs uppercase text-slate-500">Jump host (optional)</label>
         <select
           class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
@@ -964,7 +1091,7 @@ async function deleteIdentityRow(id: number) {
           <button
             type="submit"
             class="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-slate-950"
-            :disabled="!identities.length"
+            :disabled="!hostForm.use_inline_identity && !identities.length"
           >
             Save
           </button>
@@ -1057,16 +1184,82 @@ async function deleteIdentityRow(id: number) {
             {{ folderOptionLabel(f.id) }}
           </option>
         </select>
-        <label class="mt-3 block text-xs uppercase text-slate-500">Identity</label>
-        <select
-          v-model.number="editHostForm.identity_id"
-          required
-          class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
-        >
-          <option v-for="i in identities" :key="i.id" :value="i.id">
-            {{ i.label }} ({{ i.auth_type }})
-          </option>
-        </select>
+        <label class="mt-3 block text-xs uppercase text-slate-500">Credentials</label>
+        <div class="mt-1 flex gap-2">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              :checked="!editHostForm.use_inline_identity"
+              @change="editHostForm.use_inline_identity = false"
+              class="w-4 h-4"
+            />
+            <span class="text-sm">Saved identity</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              :checked="editHostForm.use_inline_identity"
+              @change="editHostForm.use_inline_identity = true"
+              class="w-4 h-4"
+            />
+            <span class="text-sm">One-time</span>
+          </label>
+        </div>
+        <div v-if="!editHostForm.use_inline_identity" class="mt-3">
+          <label class="block text-xs uppercase text-slate-500">Identity</label>
+          <select
+            v-model.number="editHostForm.identity_id"
+            required
+            class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+          >
+            <option v-for="i in identities" :key="i.id" :value="i.id">
+              {{ i.label }} ({{ i.auth_type }})
+            </option>
+          </select>
+        </div>
+        <div v-else class="mt-3 space-y-3">
+          <div>
+            <label class="block text-xs uppercase text-slate-500">Auth type</label>
+            <select
+              v-model="editHostForm.auth_type"
+              class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+            >
+              <option value="password">Password</option>
+              <option value="publickey">Public key</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs uppercase text-slate-500">SSH username</label>
+            <input
+              v-model="editHostForm.ssh_username"
+              required
+              class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div v-if="editHostForm.auth_type === 'password'">
+            <label class="block text-xs uppercase text-slate-500">Password</label>
+            <input
+              v-model="editHostForm.password"
+              type="password"
+              class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div v-else>
+            <label class="block text-xs uppercase text-slate-500">Private key</label>
+            <textarea
+              v-model="editHostForm.private_key"
+              rows="4"
+              class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm font-mono text-xs"
+              placeholder="-----BEGIN PRIVATE KEY-----"
+            />
+            <label class="mt-2 block text-xs uppercase text-slate-500">Key passphrase (optional)</label>
+            <input
+              v-model="editHostForm.key_passphrase"
+              type="password"
+              class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+            />
+          </div>
+        </div>
         <label class="mt-3 block text-xs uppercase text-slate-500">Jump host (optional)</label>
         <select
           class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
