@@ -44,6 +44,8 @@ const showAuditLog = ref(false);
 const auditLoading = ref(false);
 const auditErr = ref("");
 const auditRows = ref<ConnectionAuditRow[]>([]);
+const deleteIdentityErr = ref("");
+const deleteIdentityErrId = ref<number | null>(null);
 const newFolderLabel = ref("");
 const identityForm = ref({
   label: "",
@@ -311,9 +313,15 @@ async function deleteHostRow(id: number) {
 }
 
 async function deleteIdentityRow(id: number) {
-  if (!confirm("Remove this identity? Hosts using it may break.")) return;
-  await api.deleteIdentity(id);
-  await refreshData();
+  if (!confirm("Remove this identity?")) return;
+  deleteIdentityErr.value = "";
+  try {
+    await api.deleteIdentity(id);
+    await refreshData();
+  } catch (e) {
+    deleteIdentityErr.value = e instanceof Error ? e.message : "Failed to delete identity";
+    deleteIdentityErrId.value = id;
+  }
 }
 </script>
 
@@ -539,6 +547,16 @@ async function deleteIdentityRow(id: number) {
           <div class="text-xs font-medium uppercase tracking-wide text-slate-500">
             Saved identities
           </div>
+          <p v-if="deleteIdentityErr" class="mt-2 text-[11px] text-red-400">
+            {{ deleteIdentityErr }}
+            <button
+              type="button"
+              class="ml-2 underline hover:text-red-300"
+              @click="deleteIdentityErr = ''"
+            >
+              Dismiss
+            </button>
+          </p>
           <ul class="mt-1 max-h-32 overflow-auto text-xs text-slate-400">
             <li
               v-for="i in identities"

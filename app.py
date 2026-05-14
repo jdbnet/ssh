@@ -699,6 +699,17 @@ def update_identity(iid: int):
 @require_login
 def delete_identity(iid: int):
     with db_cursor() as (_, cur):
+        # Check if identity is being used by any hosts
+        cur.execute(
+            "SELECT COUNT(*) as count FROM ssh_hosts WHERE identity_id = %s",
+            (iid,),
+        )
+        result = cur.fetchone()
+        if result and result["count"] > 0:
+            return jsonify({
+                "error": f"Cannot delete identity: it is being used by {result['count']} host(s)"
+            }), 409
+        
         cur.execute("DELETE FROM ssh_identities WHERE id = %s", (iid,))
         if cur.rowcount == 0:
             return jsonify({"error": "not found"}), 404
