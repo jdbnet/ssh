@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { Folder, Pencil } from "lucide-vue-next";
+import { Folder, Pencil, Trash2 } from "lucide-vue-next";
 import {
   api,
   type HostRow,
@@ -724,14 +724,15 @@ async function deleteIdentityRow(id: number) {
                   title="Edit identity"
                   @click="openEditIdentity(i)"
                 >
-                  <Pencil class="h-4 w-4" aria-hidden="true" />
+                  <Pencil class="h-3 w-3" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
-                  class="shrink-0 text-red-400/70 hover:underline"
+                  class="shrink-0 text-red-400/70 hover:text-red-400"
+                  title="Delete identity"
                   @click="deleteIdentityRow(i.id)"
                 >
-                  ×
+                  <Trash2 class="h-3 w-3" aria-hidden="true" />
                 </button>
               </div>
             </li>
