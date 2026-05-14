@@ -46,6 +46,7 @@ const showAuditLog = ref(false);
 const auditLoading = ref(false);
 const auditErr = ref("");
 const auditRows = ref<ConnectionAuditRow[]>([]);
+const auditShowAll = ref(false);
 const deleteIdentityErr = ref("");
 const deleteIdentityErrId = ref<number | null>(null);
 const newFolderLabel = ref("");
@@ -208,10 +209,24 @@ function fmtDuration(totalSeconds: number | null): string {
 
 async function openAuditLog() {
   showAuditLog.value = true;
+  auditShowAll.value = false;
   auditLoading.value = true;
   auditErr.value = "";
   try {
-    auditRows.value = await api.listConnectionAudit(250);
+    auditRows.value = await api.listConnectionAudit(250, 7);
+  } catch (e) {
+    auditErr.value = e instanceof Error ? e.message : "Failed to load audit log";
+  } finally {
+    auditLoading.value = false;
+  }
+}
+
+async function loadAllAuditLog() {
+  auditShowAll.value = true;
+  auditLoading.value = true;
+  auditErr.value = "";
+  try {
+    auditRows.value = await api.listConnectionAudit(500);
   } catch (e) {
     auditErr.value = e instanceof Error ? e.message : "Failed to load audit log";
   } finally {
@@ -778,16 +793,26 @@ async function deleteIdentityRow(id: number) {
       >
         <div class="flex items-center justify-between gap-3">
           <h2 class="text-lg font-semibold text-white">Connection audit</h2>
-          <button
-            type="button"
-            class="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
-            @click="showAuditLog = false"
-          >
-            Close
-          </button>
+          <div class="flex gap-2">
+            <button
+              v-if="!auditShowAll"
+              type="button"
+              class="rounded-lg bg-slate-800 px-3 py-1.5 text-xs hover:bg-slate-700"
+              @click="loadAllAuditLog"
+            >
+              Show all
+            </button>
+            <button
+              type="button"
+              class="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
+              @click="showAuditLog = false"
+            >
+              Close
+            </button>
+          </div>
         </div>
         <p class="mt-1 text-xs text-slate-500">
-          Recent SSH sessions and how long they lasted.
+          Recent SSH sessions from the last 7 days and how long they lasted.
         </p>
         <p v-if="auditErr" class="mt-3 text-xs text-red-400">{{ auditErr }}</p>
         <p v-else-if="auditLoading" class="mt-3 text-xs text-slate-400">

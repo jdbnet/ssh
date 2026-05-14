@@ -166,8 +166,11 @@ export const api = {
     await handle(res);
   },
 
-  async listConnectionAudit(limit = 200): Promise<ConnectionAuditRow[]> {
+  async listConnectionAudit(limit = 200, daysBack?: number): Promise<ConnectionAuditRow[]> {
     const q = new URLSearchParams({ limit: String(limit) });
+    if (daysBack !== undefined) {
+      q.set("days_back", String(daysBack));
+    }
     const res = await fetch(`/api/audit/connections?${q.toString()}`, {
       credentials: "include",
     });

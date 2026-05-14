@@ -1195,22 +1195,36 @@ def delete_host(hid: int):
 @require_login
 def list_connection_audit():
     raw_limit = request.args.get("limit") or "200"
+    raw_days = request.args.get("days_back")
     try:
         limit = int(raw_limit)
     except (TypeError, ValueError):
         limit = 200
     limit = max(1, min(limit, 500))
+    
+    # Build the where clause for days filtering
+    where_clause = ""
+    params: list[Any] = []
+    if raw_days is not None:
+        try:
+            days = int(raw_days)
+            if days > 0:
+                where_clause = "WHERE started_at >= DATE_SUB(NOW(), INTERVAL %s DAY)"
+                params = [days]
+        except (TypeError, ValueError):
+            pass
+    
     with db_cursor() as (_, cur):
-        cur.execute(
-            """
+        query = f"""
             SELECT id, host_id, host_label, hostname, port, jump_host_id,
                    started_at, ended_at, duration_seconds
             FROM ssh_connection_audit
+            {where_clause}
             ORDER BY id DESC
             LIMIT %s
-            """,
-            (limit,),
-        )
+            """
+        params.append(limit)
+        cur.execute(query, tuple(params))
         rows = cur.fetchall()
     return jsonify({"items": rows})
 
