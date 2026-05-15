@@ -8,6 +8,8 @@ RUN npm run build
 FROM python:3.14-slim
 LABEL org.opencontainers.image.vendor="JDB-NET"
 WORKDIR /app
+ARG VERSION=unknown
+ENV VERSION=${VERSION}
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . /app
