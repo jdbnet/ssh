@@ -19,6 +19,7 @@ interface TabItem {
 
 const loggedIn = ref(false);
 const checking = ref(true);
+const appVersion = ref("unknown");
 const identities = ref<IdentityRow[]>([]);
 const allHosts = ref<HostRow[]>([]);
 const allFolders = ref<FolderRow[]>([]);
@@ -176,6 +177,9 @@ onMounted(async () => {
   try {
     const m = await api.me();
     loggedIn.value = m.logged_in;
+    if (m.app_version) {
+      appVersion.value = m.app_version;
+    }
     if (loggedIn.value) await refreshData();
   } catch {
     loggedIn.value = false;
@@ -527,7 +531,15 @@ async function deleteIdentityRow(id: number) {
             />
           </svg>
         </button>
-        <span class="truncate text-sm font-semibold text-white">JDB-NET SSH</span>
+        <a 
+          href="https://git.jdbnet.co.uk/jamie/ssh" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          class="flex items-center gap-2 truncate"
+        >
+          <span class="truncate text-sm font-semibold text-white">JDB-NET SSH</span>
+          <span class="truncate text-xs text-slate-400 hover:text-slate-300">{{ appVersion }}</span>
+        </a>
       </div>
       <div class="flex items-center gap-2">
         <button

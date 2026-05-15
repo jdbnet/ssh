@@ -21,7 +21,7 @@ function browseParams(folderId: number | null, q: string): string {
 }
 
 export const api = {
-  async me(): Promise<{ logged_in: boolean }> {
+  async me(): Promise<{ logged_in: boolean; app_version?: string }> {
     const res = await fetch("/api/me", { credentials: "include" });
     return handle(res);
   },

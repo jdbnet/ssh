@@ -48,6 +48,7 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(
     days=int(os.getenv("SESSION_DAYS", "14"))
 )
+app.config["VERSION"] = os.getenv("VERSION", "unknown")
 if os.getenv("SESSION_COOKIE_SECURE", "").lower() in ("1", "true", "yes"):
     app.config["SESSION_COOKIE_SECURE"] = True
 
@@ -677,9 +678,10 @@ def api_logout():
 
 @app.route("/api/me", methods=["GET"])
 def api_me():
+    version = app.config.get("VERSION", "unknown")
     if session.get("logged_in"):
-        return jsonify({"logged_in": True})
-    return jsonify({"logged_in": False})
+        return jsonify({"logged_in": True, "app_version": version})
+    return jsonify({"logged_in": False, "app_version": version})
 
 
 @app.route("/api/identities", methods=["GET"])
