@@ -194,6 +194,40 @@ export const api = {
     return d.items;
   },
 
+  async listApiKeyScopes(): Promise<ApiKeyScopeDef[]> {
+    const res = await fetch("/api/api-keys/scopes", { credentials: "include" });
+    const d = await handle<{ items: ApiKeyScopeDef[] }>(res);
+    return d.items;
+  },
+
+  async listApiKeys(): Promise<ApiKeyRow[]> {
+    const res = await fetch("/api/api-keys", { credentials: "include" });
+    const d = await handle<{ items: ApiKeyRow[] }>(res);
+    return d.items;
+  },
+
+  async createApiKey(body: {
+    label: string;
+    scopes: string[];
+    expires_at?: string | null;
+  }): Promise<CreateApiKeyResponse> {
+    const res = await fetch("/api/api-keys", {
+      method: "POST",
+      credentials: "include",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    });
+    return handle(res);
+  },
+
+  async revokeApiKey(id: number): Promise<void> {
+    const res = await fetch(`/api/api-keys/${id}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    await handle(res);
+  },
+
   async sftpList(
     connId: string,
     path: string,
@@ -303,4 +337,32 @@ export interface ConnectionAuditRow {
   started_at: string;
   ended_at: string | null;
   duration_seconds: number | null;
+}
+
+export interface ApiKeyScopeDef {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface ApiKeyRow {
+  id: number;
+  label: string;
+  key_prefix: string;
+  scopes: string[];
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  expired: boolean;
+  active: boolean;
+}
+
+export interface CreateApiKeyResponse {
+  id: number;
+  label: string;
+  key_prefix: string;
+  scopes: string[];
+  expires_at: string | null;
+  key: string;
 }

@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import io
 import json
+import secrets
 import logging
 import posixpath
 import queue
@@ -22,7 +23,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import Any
 
@@ -32,7 +33,7 @@ import paramiko
 from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, session, send_from_directory, send_file, abort, Response
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import safe_join, secure_filename
 from simple_websocket import ConnectionClosed, Server
 
@@ -135,6 +136,18 @@ def init_db():
       duration_seconds INT NULL,
       CONSTRAINT fk_audit_host FOREIGN KEY (host_id)
         REFERENCES ssh_hosts(id) ON DELETE SET NULL
+    );
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      label VARCHAR(255) NOT NULL,
+      key_prefix VARCHAR(24) NOT NULL,
+      key_hash VARCHAR(255) NOT NULL,
+      scopes JSON NOT NULL,
+      expires_at TIMESTAMP NULL,
+      last_used_at TIMESTAMP NULL,
+      revoked_at TIMESTAMP NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_api_keys_prefix (key_prefix)
     );
     """
     with db_cursor() as (_, cur):
@@ -335,6 +348,153 @@ def require_login(fn):
         return fn(*args, **kwargs)
 
     return wrapped
+
+
+VALID_API_SCOPES = frozenset(
+    {
+        "read:hosts",
+        "write:hosts",
+        "read:audit",
+        "terminal:connect",
+        "sftp:manage",
+    }
+)
+
+
+def _parse_api_key_scopes(raw: Any) -> set[str]:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return set()
+    if not isinstance(raw, list):
+        return set()
+    return {s for s in raw if isinstance(s, str) and s in VALID_API_SCOPES}
+
+
+def _bearer_token_from_request() -> str | None:
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:].strip()
+        return token or None
+    return None
+
+
+def _authenticate_api_key(token: str) -> dict[str, Any] | None:
+    if not token.startswith("ssh_k_"):
+        return None
+    parts = token.split("_")
+    if len(parts) < 4 or parts[0] != "ssh" or parts[1] != "k" or len(parts[2]) != 8:
+        return None
+    key_prefix = f"ssh_k_{parts[2]}"
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT id, key_hash, scopes, expires_at, revoked_at
+            FROM api_keys
+            WHERE key_prefix = %s
+            LIMIT 1
+            """,
+            (key_prefix,),
+        )
+        row = cur.fetchone()
+    if not row or row.get("revoked_at"):
+        return None
+    expires_at = row.get("expires_at")
+    if expires_at is not None and expires_at <= _utcnow():
+        return None
+    if not check_password_hash(row["key_hash"], token):
+        return None
+    scopes = _parse_api_key_scopes(row.get("scopes"))
+    if not scopes:
+        return None
+    with db_cursor() as (_, cur):
+        cur.execute(
+            "UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = %s",
+            (row["id"],),
+        )
+    return {"type": "api_key", "id": row["id"], "scopes": scopes}
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def resolve_auth() -> dict[str, Any] | None:
+    if session.get("logged_in"):
+        return {"type": "session", "scopes": set(VALID_API_SCOPES)}
+    token = _bearer_token_from_request()
+    if token:
+        return _authenticate_api_key(token)
+    return None
+
+
+def _ws_resolve_auth() -> dict[str, Any] | None:
+    if session.get("logged_in"):
+        return {"type": "session", "scopes": set(VALID_API_SCOPES)}
+    token = (request.args.get("token") or "").strip()
+    if not token:
+        token = _bearer_token_from_request() or ""
+    if token:
+        return _authenticate_api_key(token)
+    return None
+
+
+def _auth_has_scopes(auth: dict[str, Any], required: tuple[str, ...]) -> bool:
+    if not required:
+        return True
+    scopes = auth.get("scopes") or set()
+    return all(scope in scopes for scope in required)
+
+
+def require_auth(*required_scopes: str):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapped(*args, **kwargs):
+            auth = resolve_auth()
+            if not auth:
+                return jsonify({"error": "unauthorized"}), 401
+            if not _auth_has_scopes(auth, required_scopes):
+                return jsonify({"error": "forbidden"}), 403
+            return fn(*args, **kwargs)
+
+        return wrapped
+
+    return decorator
+
+
+def _validate_api_key_scopes(raw: Any) -> list[str] | None:
+    if not isinstance(raw, list):
+        return None
+    scopes = sorted(_parse_api_key_scopes(raw))
+    if not scopes:
+        return None
+    return scopes
+
+
+def _generate_api_key_material() -> tuple[str, str, str]:
+    key_prefix = f"ssh_k_{secrets.token_hex(4)}"
+    full_key = f"{key_prefix}_{secrets.token_urlsafe(32)}"
+    return full_key, key_prefix, generate_password_hash(full_key)
+
+
+def _parse_optional_expires_at(raw: Any) -> Any:
+    if raw is None or raw == "":
+        return None
+    if not isinstance(raw, str):
+        return "invalid"
+    text = raw.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return "invalid"
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 _registry_lock = threading.Lock()
@@ -685,7 +845,7 @@ def api_me():
 
 
 @app.route("/api/identities", methods=["GET"])
-@require_login
+@require_auth("read:hosts")
 def list_identities():
     with db_cursor() as (_, cur):
         cur.execute(
@@ -696,7 +856,7 @@ def list_identities():
 
 
 @app.route("/api/identities", methods=["POST"])
-@require_login
+@require_auth("write:hosts")
 def create_identity():
     body = request.get_json(silent=True) or {}
     label = (body.get("label") or "").strip()
@@ -739,7 +899,7 @@ def create_identity():
 
 
 @app.route("/api/identities/<int:iid>", methods=["PATCH"])
-@require_login
+@require_auth("write:hosts")
 def update_identity(iid: int):
     body = request.get_json(silent=True) or {}
     with db_cursor() as (_, cur):
@@ -805,7 +965,7 @@ def update_identity(iid: int):
 
 
 @app.route("/api/identities/<int:iid>", methods=["DELETE"])
-@require_login
+@require_auth("write:hosts")
 def delete_identity(iid: int):
     with db_cursor() as (_, cur):
         # Check if identity is being used by any hosts
@@ -841,7 +1001,7 @@ def _host_select_sql(extra_where: str = "") -> str:
             """
 
 @app.route("/api/folders", methods=["GET"])
-@require_login
+@require_auth("read:hosts")
 def list_all_folders():
     with db_cursor() as (_, cur):
         cur.execute(
@@ -852,7 +1012,7 @@ def list_all_folders():
 
 
 @app.route("/api/folders", methods=["POST"])
-@require_login
+@require_auth("write:hosts")
 def create_folder():
     body = request.get_json(silent=True) or {}
     label = (body.get("label") or "").strip()
@@ -875,7 +1035,7 @@ def create_folder():
 
 
 @app.route("/api/folders/<int:fid>", methods=["PATCH"])
-@require_login
+@require_auth("write:hosts")
 def update_folder(fid: int):
     body = request.get_json(silent=True) or {}
     with db_cursor() as (_, cur):
@@ -915,7 +1075,7 @@ def update_folder(fid: int):
 
 
 @app.route("/api/folders/<int:fid>", methods=["DELETE"])
-@require_login
+@require_auth("write:hosts")
 def delete_folder(fid: int):
     with db_cursor() as (_, cur):
         cur.execute("DELETE FROM ssh_folders WHERE id = %s", (fid,))
@@ -925,7 +1085,7 @@ def delete_folder(fid: int):
 
 
 @app.route("/api/browse", methods=["GET"])
-@require_login
+@require_auth("read:hosts")
 def api_browse():
     raw_fid = request.args.get("folder_id")
     if raw_fid in (None, "", "root"):
@@ -1012,7 +1172,7 @@ def api_browse():
 
 
 @app.route("/api/hosts", methods=["GET"])
-@require_login
+@require_auth("read:hosts")
 def list_hosts():
     with db_cursor() as (_, cur):
         cur.execute(_host_select_sql("") + " ORDER BY h.label")
@@ -1021,7 +1181,7 @@ def list_hosts():
 
 
 @app.route("/api/hosts", methods=["POST"])
-@require_login
+@require_auth("write:hosts")
 def create_host():
     body = request.get_json(silent=True) or {}
     label = (body.get("label") or "").strip()
@@ -1099,7 +1259,7 @@ def create_host():
 
 
 @app.route("/api/hosts/<int:hid>", methods=["PATCH"])
-@require_login
+@require_auth("write:hosts")
 def update_host(hid: int):
     body = request.get_json(silent=True) or {}
     fields = []
@@ -1199,7 +1359,7 @@ def update_host(hid: int):
 
 
 @app.route("/api/hosts/<int:hid>", methods=["DELETE"])
-@require_login
+@require_auth("write:hosts")
 def delete_host(hid: int):
     with db_cursor() as (_, cur):
         cur.execute("DELETE FROM ssh_hosts WHERE id = %s", (hid,))
@@ -1209,7 +1369,7 @@ def delete_host(hid: int):
 
 
 @app.route("/api/audit/connections", methods=["GET"])
-@require_login
+@require_auth("read:audit")
 def list_connection_audit():
     raw_limit = request.args.get("limit") or "200"
     raw_days = request.args.get("days_back")
@@ -1246,6 +1406,185 @@ def list_connection_audit():
     return jsonify({"items": rows})
 
 
+@app.route("/api/api-keys/scopes", methods=["GET"])
+@require_login
+def list_api_key_scopes():
+    return jsonify(
+        {
+            "items": [
+                {
+                    "id": "read:hosts",
+                    "label": "Read hosts",
+                    "description": "List hosts, folders, and identities",
+                },
+                {
+                    "id": "write:hosts",
+                    "label": "Write hosts",
+                    "description": "Create, update, and delete hosts, folders, and identities",
+                },
+                {
+                    "id": "read:audit",
+                    "label": "Read audit",
+                    "description": "View the connection audit log",
+                },
+                {
+                    "id": "terminal:connect",
+                    "label": "Terminal",
+                    "description": "Open SSH terminal sessions (WebSocket)",
+                },
+                {
+                    "id": "sftp:manage",
+                    "label": "SFTP",
+                    "description": "List, upload, download, and manage remote files",
+                },
+            ]
+        }
+    )
+
+
+def _serialize_api_key_row(row: dict[str, Any]) -> dict[str, Any]:
+    scopes = sorted(_parse_api_key_scopes(row.get("scopes")))
+
+    def _fmt_ts(val: Any) -> str | None:
+        if val is None:
+            return None
+        if hasattr(val, "isoformat"):
+            return val.isoformat(sep=" ", timespec="seconds")
+        return str(val)
+
+    expires_at = row.get("expires_at")
+    revoked_at = row.get("revoked_at")
+    expired = bool(
+        expires_at is not None and expires_at <= _utcnow() and revoked_at is None
+    )
+    return {
+        "id": row["id"],
+        "label": row["label"],
+        "key_prefix": row["key_prefix"],
+        "scopes": scopes,
+        "expires_at": _fmt_ts(expires_at),
+        "last_used_at": _fmt_ts(row.get("last_used_at")),
+        "revoked_at": _fmt_ts(revoked_at),
+        "created_at": _fmt_ts(row.get("created_at")),
+        "expired": expired,
+        "active": revoked_at is None and not expired,
+    }
+
+
+@app.route("/api/api-keys", methods=["GET"])
+@require_login
+def list_api_keys():
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT id, label, key_prefix, scopes, expires_at, last_used_at,
+                   revoked_at, created_at
+            FROM api_keys
+            ORDER BY id DESC
+            """
+        )
+        rows = cur.fetchall()
+    return jsonify({"items": [_serialize_api_key_row(r) for r in rows]})
+
+
+@app.route("/api/api-keys", methods=["POST"])
+@require_login
+def create_api_key():
+    body = request.get_json(silent=True) or {}
+    label = (body.get("label") or "").strip()
+    if not label:
+        return jsonify({"error": "label required"}), 400
+    scopes = _validate_api_key_scopes(body.get("scopes"))
+    if scopes is None:
+        return jsonify({"error": "at least one valid scope required"}), 400
+    expires_at = _parse_optional_expires_at(body.get("expires_at"))
+    if expires_at == "invalid":
+        return jsonify({"error": "invalid expires_at"}), 400
+    if expires_at is not None and expires_at <= _utcnow():
+        return jsonify({"error": "expires_at must be in the future"}), 400
+    full_key, key_prefix, key_hash = _generate_api_key_material()
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            INSERT INTO api_keys (label, key_prefix, key_hash, scopes, expires_at)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (label, key_prefix, key_hash, json.dumps(scopes), expires_at),
+        )
+        key_id = cur.lastrowid
+    return (
+        jsonify(
+            {
+                "id": key_id,
+                "label": label,
+                "key_prefix": key_prefix,
+                "scopes": scopes,
+                "expires_at": expires_at.isoformat(sep=" ", timespec="seconds")
+                if expires_at
+                else None,
+                "key": full_key,
+            }
+        ),
+        201,
+    )
+
+
+@app.route("/api/api-keys/<int:kid>", methods=["PATCH"])
+@require_login
+def update_api_key(kid: int):
+    body = request.get_json(silent=True) or {}
+    sets: list[str] = []
+    params: list[Any] = []
+    if "label" in body:
+        label = (body.get("label") or "").strip()
+        if not label:
+            return jsonify({"error": "label required"}), 400
+        sets.append("label = %s")
+        params.append(label)
+    if "scopes" in body:
+        scopes = _validate_api_key_scopes(body.get("scopes"))
+        if scopes is None:
+            return jsonify({"error": "at least one valid scope required"}), 400
+        sets.append("scopes = %s")
+        params.append(json.dumps(scopes))
+    if "expires_at" in body:
+        expires_at = _parse_optional_expires_at(body.get("expires_at"))
+        if expires_at == "invalid":
+            return jsonify({"error": "invalid expires_at"}), 400
+        if expires_at is not None and expires_at <= _utcnow():
+            return jsonify({"error": "expires_at must be in the future"}), 400
+        sets.append("expires_at = %s")
+        params.append(expires_at)
+    if not sets:
+        return jsonify({"error": "no changes"}), 400
+    params.append(kid)
+    with db_cursor() as (_, cur):
+        cur.execute(
+            f"UPDATE api_keys SET {', '.join(sets)} WHERE id = %s AND revoked_at IS NULL",
+            tuple(params),
+        )
+        if cur.rowcount == 0:
+            return jsonify({"error": "not found"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/api-keys/<int:kid>", methods=["DELETE"])
+@require_login
+def revoke_api_key(kid: int):
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            UPDATE api_keys
+            SET revoked_at = CURRENT_TIMESTAMP
+            WHERE id = %s AND revoked_at IS NULL
+            """,
+            (kid,),
+        )
+        if cur.rowcount == 0:
+            return jsonify({"error": "not found"}), 404
+    return jsonify({"ok": True})
+
+
 @app.route("/ws/terminal", websocket=True)
 def ws_terminal():
     sock, use_gevent_wsgi = _open_terminal_socket()
@@ -1257,7 +1596,8 @@ def ws_terminal():
             pass
         return GeventWsAppResponse() if use_gevent_wsgi else Response(status=400)
 
-    if not session.get("logged_in"):
+    auth = _ws_resolve_auth()
+    if not auth or not _auth_has_scopes(auth, ("terminal:connect",)):
         return bail_close(1008, "unauthorized")
 
     host_id_raw = request.args.get("host_id")
@@ -1439,7 +1779,7 @@ def ws_terminal():
 
 
 @app.route("/api/sftp/<cid>/list", methods=["POST"])
-@require_login
+@require_auth("sftp:manage")
 def sftp_list(cid: str):
     entry = _conn_get(cid)
     if not entry:
@@ -1472,7 +1812,7 @@ def _is_dir_mode(mode: int) -> bool:
 
 
 @app.route("/api/sftp/<cid>/mkdir", methods=["POST"])
-@require_login
+@require_auth("sftp:manage")
 def sftp_mkdir(cid: str):
     entry = _conn_get(cid)
     if not entry:
@@ -1487,7 +1827,7 @@ def sftp_mkdir(cid: str):
 
 
 @app.route("/api/sftp/<cid>/remove", methods=["POST"])
-@require_login
+@require_auth("sftp:manage")
 def sftp_remove(cid: str):
     entry = _conn_get(cid)
     if not entry:
@@ -1509,7 +1849,7 @@ def sftp_remove(cid: str):
 
 
 @app.route("/api/sftp/<cid>/rename", methods=["POST"])
-@require_login
+@require_auth("sftp:manage")
 def sftp_rename(cid: str):
     entry = _conn_get(cid)
     if not entry:
@@ -1525,7 +1865,7 @@ def sftp_rename(cid: str):
 
 
 @app.route("/api/sftp/<cid>/upload", methods=["POST"])
-@require_login
+@require_auth("sftp:manage")
 def sftp_upload(cid: str):
     entry = _conn_get(cid)
     if not entry:
@@ -1546,7 +1886,7 @@ def sftp_upload(cid: str):
 
 
 @app.route("/api/sftp/<cid>/download", methods=["GET"])
-@require_login
+@require_auth("sftp:manage")
 def sftp_download(cid: str):
     entry = _conn_get(cid)
     if not entry:

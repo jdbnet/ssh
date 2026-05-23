@@ -7,6 +7,8 @@ import {
   type IdentityRow,
   type FolderRow,
   type ConnectionAuditRow,
+  type ApiKeyRow,
+  type ApiKeyScopeDef,
 } from "@/api";
 import LoginForm from "@/components/LoginForm.vue";
 import TabContent from "@/components/TabContent.vue";
@@ -44,10 +46,23 @@ const showHostForm = ref(false);
 const showFolderForm = ref(false);
 const showEditHost = ref(false);
 const showAuditLog = ref(false);
+const showApiKeys = ref(false);
 const auditLoading = ref(false);
 const auditErr = ref("");
 const auditRows = ref<ConnectionAuditRow[]>([]);
 const auditShowAll = ref(false);
+const apiKeysLoading = ref(false);
+const apiKeysErr = ref("");
+const apiKeyRows = ref<ApiKeyRow[]>([]);
+const apiKeyScopes = ref<ApiKeyScopeDef[]>([]);
+const apiKeyForm = ref({
+  label: "",
+  scopes: [] as string[],
+  expires_at: "",
+});
+const apiKeyCreating = ref(false);
+const apiKeyCreateErr = ref("");
+const createdApiKey = ref("");
 const deleteIdentityErr = ref("");
 const deleteIdentityErrId = ref<number | null>(null);
 const newFolderLabel = ref("");
@@ -242,6 +257,121 @@ async function loadAllAuditLog() {
   } finally {
     auditLoading.value = false;
   }
+}
+
+function resetApiKeyForm() {
+  apiKeyForm.value = {
+    label: "",
+    scopes: apiKeyScopes.value.some((s) => s.id === "read:hosts")
+      ? ["read:hosts"]
+      : [],
+    expires_at: "",
+  };
+  apiKeyCreateErr.value = "";
+  createdApiKey.value = "";
+}
+
+function toggleApiKeyScope(scopeId: string) {
+  const scopes = apiKeyForm.value.scopes;
+  const idx = scopes.indexOf(scopeId);
+  if (idx >= 0) {
+    apiKeyForm.value.scopes = scopes.filter((s) => s !== scopeId);
+  } else {
+    apiKeyForm.value.scopes = [...scopes, scopeId];
+  }
+}
+
+async function openApiKeys() {
+  showApiKeys.value = true;
+  apiKeysLoading.value = true;
+  apiKeysErr.value = "";
+  resetApiKeyForm();
+  try {
+    if (!apiKeyScopes.value.length) {
+      apiKeyScopes.value = await api.listApiKeyScopes();
+      resetApiKeyForm();
+    }
+    apiKeyRows.value = await api.listApiKeys();
+  } catch (e) {
+    apiKeysErr.value = e instanceof Error ? e.message : "Failed to load API keys";
+  } finally {
+    apiKeysLoading.value = false;
+  }
+}
+
+async function refreshApiKeys() {
+  apiKeysLoading.value = true;
+  apiKeysErr.value = "";
+  try {
+    apiKeyRows.value = await api.listApiKeys();
+  } catch (e) {
+    apiKeysErr.value = e instanceof Error ? e.message : "Failed to load API keys";
+  } finally {
+    apiKeysLoading.value = false;
+  }
+}
+
+async function submitApiKey() {
+  apiKeyCreating.value = true;
+  apiKeyCreateErr.value = "";
+  createdApiKey.value = "";
+  try {
+    const body: {
+      label: string;
+      scopes: string[];
+      expires_at?: string | null;
+    } = {
+      label: apiKeyForm.value.label.trim(),
+      scopes: apiKeyForm.value.scopes,
+    };
+    if (apiKeyForm.value.expires_at) {
+      body.expires_at = new Date(apiKeyForm.value.expires_at).toISOString();
+    }
+    const created = await api.createApiKey(body);
+    createdApiKey.value = created.key;
+    apiKeyForm.value = {
+      label: "",
+      scopes: apiKeyScopes.value.some((s) => s.id === "read:hosts")
+        ? ["read:hosts"]
+        : [],
+      expires_at: "",
+    };
+    await refreshApiKeys();
+  } catch (e) {
+    apiKeyCreateErr.value = e instanceof Error ? e.message : "Failed to create API key";
+  } finally {
+    apiKeyCreating.value = false;
+  }
+}
+
+async function revokeApiKey(id: number, label: string) {
+  if (!confirm(`Revoke API key "${label}"? This cannot be undone.`)) return;
+  apiKeysErr.value = "";
+  try {
+    await api.revokeApiKey(id);
+    await refreshApiKeys();
+  } catch (e) {
+    apiKeysErr.value = e instanceof Error ? e.message : "Failed to revoke API key";
+  }
+}
+
+async function copyCreatedApiKey() {
+  if (!createdApiKey.value) return;
+  try {
+    await navigator.clipboard.writeText(createdApiKey.value);
+  } catch {
+    /* clipboard may be unavailable */
+  }
+}
+
+function apiKeyStatus(row: ApiKeyRow): string {
+  if (row.revoked_at) return "Revoked";
+  if (row.expired) return "Expired";
+  return "Active";
+}
+
+function fmtScopes(scopes: string[]): string {
+  return scopes.join(", ");
 }
 
 function openTab(h: HostRow) {
@@ -545,6 +675,13 @@ async function deleteIdentityRow(id: number) {
         <button
           type="button"
           class="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
+          @click="openApiKeys"
+        >
+          API keys
+        </button>
+        <button
+          type="button"
+          class="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
           @click="openAuditLog"
         >
           Connection audit
@@ -834,6 +971,144 @@ async function deleteIdentityRow(id: number) {
           </div>
         </template>
       </main>
+    </div>
+
+    <div
+      v-if="showApiKeys"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+    >
+      <div
+        class="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-xl border border-slate-800 bg-surface-raised p-6 shadow-xl"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-lg font-semibold text-white">API keys</h2>
+          <button
+            type="button"
+            class="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
+            @click="showApiKeys = false"
+          >
+            Close
+          </button>
+        </div>
+        <p class="mt-1 text-xs text-slate-500">
+          Create keys for external systems. Send
+          <code class="text-slate-400">Authorization: Bearer &lt;key&gt;</code>
+          on API requests. For WebSocket terminals, append
+          <code class="text-slate-400">?token=&lt;key&gt;</code>.
+        </p>
+
+        <form class="mt-5 rounded-lg border border-slate-800 bg-surface-overlay/40 p-4" @submit.prevent="submitApiKey">
+          <h3 class="text-sm font-medium text-white">Create key</h3>
+          <label class="mt-3 block text-xs uppercase text-slate-500">Label</label>
+          <input
+            v-model="apiKeyForm.label"
+            required
+            maxlength="255"
+            placeholder="CI deploy, monitoring, …"
+            class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+          />
+          <p class="mt-3 text-xs uppercase text-slate-500">Scopes</p>
+          <div class="mt-2 space-y-2">
+            <label
+              v-for="scope in apiKeyScopes"
+              :key="scope.id"
+              class="flex cursor-pointer items-start gap-2 rounded border border-slate-800 px-3 py-2 hover:border-slate-700"
+            >
+              <input
+                type="checkbox"
+                class="mt-0.5"
+                :checked="apiKeyForm.scopes.includes(scope.id)"
+                @change="toggleApiKeyScope(scope.id)"
+              />
+              <span>
+                <span class="block text-sm text-slate-200">{{ scope.label }}</span>
+                <span class="block text-xs text-slate-500">{{ scope.description }}</span>
+              </span>
+            </label>
+          </div>
+          <label class="mt-3 block text-xs uppercase text-slate-500">Expiry (optional)</label>
+          <input
+            v-model="apiKeyForm.expires_at"
+            type="datetime-local"
+            class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
+          />
+          <p v-if="apiKeyCreateErr" class="mt-3 text-xs text-red-400">{{ apiKeyCreateErr }}</p>
+          <div
+            v-if="createdApiKey"
+            class="mt-3 rounded border border-amber-900/60 bg-amber-950/30 p-3"
+          >
+            <p class="text-xs text-amber-200">
+              Copy this key now — it will not be shown again.
+            </p>
+            <div class="mt-2 flex items-center gap-2">
+              <code class="min-w-0 flex-1 break-all rounded bg-surface-overlay px-2 py-1 text-[11px] text-slate-200">
+                {{ createdApiKey }}
+              </code>
+              <button
+                type="button"
+                class="shrink-0 rounded bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700"
+                @click="copyCreatedApiKey"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+          <button
+            type="submit"
+            class="mt-4 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+            :disabled="apiKeyCreating || !apiKeyForm.scopes.length"
+          >
+            {{ apiKeyCreating ? "Creating…" : "Create key" }}
+          </button>
+        </form>
+
+        <p v-if="apiKeysErr" class="mt-4 text-xs text-red-400">{{ apiKeysErr }}</p>
+        <p v-else-if="apiKeysLoading" class="mt-4 text-xs text-slate-400">Loading…</p>
+        <div v-else class="mt-4 overflow-x-auto">
+          <table class="min-w-full text-left text-xs">
+            <thead class="text-slate-500">
+              <tr class="border-b border-slate-800">
+                <th class="px-2 py-2 font-medium">Label</th>
+                <th class="px-2 py-2 font-medium">Prefix</th>
+                <th class="px-2 py-2 font-medium">Scopes</th>
+                <th class="px-2 py-2 font-medium">Expires</th>
+                <th class="px-2 py-2 font-medium">Last used</th>
+                <th class="px-2 py-2 font-medium">Status</th>
+                <th class="px-2 py-2 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="row in apiKeyRows"
+                :key="row.id"
+                class="border-b border-slate-900/80 text-slate-300"
+              >
+                <td class="px-2 py-2">{{ row.label }}</td>
+                <td class="px-2 py-2 font-mono text-[11px]">{{ row.key_prefix }}…</td>
+                <td class="px-2 py-2">{{ fmtScopes(row.scopes) }}</td>
+                <td class="px-2 py-2">{{ row.expires_at ? fmtDate(row.expires_at) : "Never" }}</td>
+                <td class="px-2 py-2">{{ row.last_used_at ? fmtDate(row.last_used_at) : "Never" }}</td>
+                <td class="px-2 py-2">{{ apiKeyStatus(row) }}</td>
+                <td class="px-2 py-2 text-right">
+                  <button
+                    v-if="row.active"
+                    type="button"
+                    class="rounded px-2 py-1 text-red-400 hover:bg-slate-800"
+                    @click="revokeApiKey(row.id, row.label)"
+                  >
+                    Revoke
+                  </button>
+                </td>
+              </tr>
+              <tr v-if="!apiKeyRows.length">
+                <td class="px-2 py-4 text-center text-slate-500" colspan="7">
+                  No API keys yet.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <div
