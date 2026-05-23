@@ -30,7 +30,6 @@ services:
     ports:
       - "5000:5000"
     environment:
-      GEVENT_MONKEY_PATCH: "1"
       MYSQL_HOST: "<YOUR_MYSQL_HOST>"
       MYSQL_DATABASE: "<YOUR_MYSQL_DATABASE>"
       MYSQL_USER: "<YOUR_MYSQL_USER>"

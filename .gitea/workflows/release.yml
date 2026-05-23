@@ -20,11 +20,11 @@ jobs:
         id: get_version
         run: echo "VERSION=${{ github.head_ref }}" >> $GITHUB_OUTPUT
 
-      # - name: Generate Changelog
-      #   id: changelog
-      #   uses: https://github.com/metcalfc/changelog-generator@v4.6.2
-      #   with:
-      #     myToken: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate Changelog
+        id: changelog
+        uses: https://github.com/metcalfc/changelog-generator@v4.6.2
+        with:
+          myToken: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
         run: |
