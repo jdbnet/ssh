@@ -644,7 +644,26 @@ def _close_ssh_entry(entry: dict[str, Any]) -> None:
 
 
 MAX_CONCURRENT_SSH = int(os.getenv("MAX_CONCURRENT_SSH", "32"))
-SSH_KEEPALIVE_INTERVAL = int(os.getenv("SSH_KEEPALIVE_INTERVAL", "30"))
+SSH_KEEPALIVE_INTERVAL = int(os.getenv("SSH_KEEPALIVE_INTERVAL", "15"))
+WS_KEEPALIVE_INTERVAL = int(os.getenv("WS_KEEPALIVE_INTERVAL", "25"))
+
+
+def _apply_ssh_keepalive(client: paramiko.SSHClient) -> None:
+    if SSH_KEEPALIVE_INTERVAL <= 0:
+        return
+    transport = client.get_transport()
+    if transport is not None:
+        transport.set_keepalive(SSH_KEEPALIVE_INTERVAL)
+
+
+def _ssh_transports_alive(
+    client: paramiko.SSHClient, jump_clients: list[paramiko.SSHClient] | None
+) -> bool:
+    for ssh_client in (client, *(jump_clients or [])):
+        transport = ssh_client.get_transport()
+        if transport is None or not transport.is_active():
+            return False
+    return True
 
 
 class GeventWsAppResponse(Response):
@@ -795,9 +814,7 @@ def _connect_paramiko(host_row: dict, sock=None) -> tuple[paramiko.SSHClient, pa
         )
 
     if SSH_KEEPALIVE_INTERVAL > 0:
-        transport = client.get_transport()
-        if transport is not None:
-            transport.set_keepalive(SSH_KEEPALIVE_INTERVAL)
+        _apply_ssh_keepalive(client)
 
     chan = client.invoke_shell(term="xterm-256color", width=120, height=40)
     chan.setblocking(True)
@@ -1839,8 +1856,8 @@ def ws_terminal():
                         height=int(o.get("rows", 40)),
                     )
                     return True
-                elif o.get("type") == "ping":
-                    # Ping message to keep connection alive, ignore without sending to channel
+                if o.get("type") == "ping":
+                    sock.send(json.dumps({"type": "pong"}))
                     return True
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
@@ -1889,6 +1906,7 @@ def ws_terminal():
             )
         )
 
+        last_ws_keepalive = time.monotonic()
         while not stop.is_set():
             drained_eof = False
             try:
@@ -1898,16 +1916,31 @@ def ws_terminal():
                         drained_eof = True
                         break
                     sock.send(item)
+                    last_ws_keepalive = time.monotonic()
             except queue.Empty:
                 pass
             if drained_eof:
                 break
+
+            now = time.monotonic()
+            if (
+                WS_KEEPALIVE_INTERVAL > 0
+                and now - last_ws_keepalive >= WS_KEEPALIVE_INTERVAL
+            ):
+                if not _ssh_transports_alive(client, jump_clients):
+                    break
+                try:
+                    sock.send(json.dumps({"type": "keepalive"}))
+                except Exception:
+                    break
+                last_ws_keepalive = now
 
             msg = sock.receive(timeout=0.15)
             if msg is None:
                 if use_gevent_wsgi and getattr(sock, "_gw", None) is not None and sock._gw.closed:
                     break
                 continue
+            last_ws_keepalive = time.monotonic()
             if not handle_ws_inbound(msg):
                 break
     except ConnectionClosed:

@@ -24,7 +24,7 @@ let ws: WebSocket | null = null;
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let ro: ResizeObserver | null = null;
-let pingInterval: NodeJS.Timeout | null = null;
+let visibilityHandler: (() => void) | null = null;
 
 function wsUrl(hostId: number): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -37,6 +37,12 @@ function sendResize() {
   ws.send(JSON.stringify({ type: "resize", ...dims }));
 }
 
+function sendPing() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "ping" }));
+  }
+}
+
 function fitAndResize() {
   if (!fit || !term || !props.visible) return;
   try {
@@ -45,6 +51,25 @@ function fitAndResize() {
   } catch {
     /* ignore */
   }
+}
+
+function isControlMessage(raw: string): boolean {
+  try {
+    const o = JSON.parse(raw) as { type?: string; conn_id?: string };
+    if (o.type === "ready" && o.conn_id) {
+      connId.value = o.conn_id;
+      status.value = "";
+      fitAndResize();
+      term?.focus();
+      return true;
+    }
+    if (o.type === "keepalive" || o.type === "pong") {
+      return true;
+    }
+  } catch {
+    /* not JSON control traffic */
+  }
+  return false;
 }
 
 onMounted(async () => {
@@ -87,29 +112,12 @@ onMounted(async () => {
   ws.onopen = () => {
     status.value = "Handshaking…";
     sendResize();
-    // Send ping every 60 seconds to keep connection alive
-    pingInterval = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "ping" }));
-      }
-    }, 60000);
   };
 
   ws.onmessage = (ev) => {
     if (!term) return;
     if (typeof ev.data === "string") {
-      try {
-        const o = JSON.parse(ev.data) as { type?: string; conn_id?: string };
-        if (o.type === "ready" && o.conn_id) {
-          connId.value = o.conn_id;
-          status.value = "";
-          fitAndResize();
-          term.focus();
-          return;
-        }
-      } catch {
-        /* fall through */
-      }
+      if (isControlMessage(ev.data)) return;
       term.write(ev.data);
       return;
     }
@@ -122,22 +130,26 @@ onMounted(async () => {
   };
 
   ws.onclose = () => {
-    if (pingInterval) {
-      clearInterval(pingInterval);
-      pingInterval = null;
-    }
     if (!connId.value) {
       status.value = "Disconnected";
     } else {
       status.value = "Session ended";
     }
   };
+
+  visibilityHandler = () => {
+    if (document.visibilityState === "visible") {
+      sendPing();
+      fitAndResize();
+    }
+  };
+  document.addEventListener("visibilitychange", visibilityHandler);
 });
 
 onUnmounted(() => {
-  if (pingInterval) {
-    clearInterval(pingInterval);
-    pingInterval = null;
+  if (visibilityHandler) {
+    document.removeEventListener("visibilitychange", visibilityHandler);
+    visibilityHandler = null;
   }
   ro?.disconnect();
   ro = null;
@@ -155,6 +167,7 @@ watch(
       await nextTick();
       fitAndResize();
       term?.focus();
+      sendPing();
     }
   },
 );
