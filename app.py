@@ -19,6 +19,7 @@ import secrets
 import logging
 import posixpath
 import queue
+import re
 import threading
 import time
 import uuid
@@ -149,6 +150,20 @@ def init_db():
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_api_keys_prefix (key_prefix)
     );
+    CREATE TABLE IF NOT EXISTS ssh_tags (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(64) NOT NULL,
+      UNIQUE KEY uq_ssh_tags_name (name)
+    );
+    CREATE TABLE IF NOT EXISTS ssh_host_tags (
+      host_id INT NOT NULL,
+      tag_id INT NOT NULL,
+      PRIMARY KEY (host_id, tag_id),
+      CONSTRAINT fk_host_tags_host FOREIGN KEY (host_id)
+        REFERENCES ssh_hosts(id) ON DELETE CASCADE,
+      CONSTRAINT fk_host_tags_tag FOREIGN KEY (tag_id)
+        REFERENCES ssh_tags(id) ON DELETE CASCADE
+    );
     """
     with db_cursor() as (_, cur):
         for stmt in ddl.split(";"):
@@ -269,6 +284,92 @@ def _like_escape(s: str) -> str:
         s.replace("\\", "\\\\")
         .replace("%", "\\%")
         .replace("_", "\\_")
+    )
+
+
+_TAG_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def _normalize_tag_name(raw: str) -> str | None:
+    name = re.sub(r"\s+", "", raw.strip().lower())
+    if not name or not _TAG_NAME_RE.match(name):
+        return None
+    return name
+
+
+def _parse_host_tags(raw: Any) -> list[str] | None:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        return None
+    tags: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            return None
+        norm = _normalize_tag_name(item)
+        if norm is None:
+            return None
+        if norm not in seen:
+            seen.add(norm)
+            tags.append(norm)
+    return sorted(tags)
+
+
+def _parse_search_query(q: str) -> tuple[str, str]:
+    if q.lower().startswith("tag:"):
+        return "tag", q[4:].strip()
+    return "text", q
+
+
+def _host_tag_list_sql() -> str:
+    return """
+            (SELECT GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',')
+             FROM ssh_host_tags ht
+             INNER JOIN ssh_tags t ON t.id = ht.tag_id
+             WHERE ht.host_id = h.id) AS tag_list
+            """
+
+
+def _serialize_host_row(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    tag_list = out.pop("tag_list", None)
+    out["tags"] = tag_list.split(",") if tag_list else []
+    return out
+
+
+def _serialize_host_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_serialize_host_row(r) for r in rows]
+
+
+def _tag_id(cur, name: str) -> int:
+    cur.execute(
+        "INSERT INTO ssh_tags (name) VALUES (%s) ON DUPLICATE KEY UPDATE name = name",
+        (name,),
+    )
+    cur.execute("SELECT id FROM ssh_tags WHERE name = %s", (name,))
+    row = cur.fetchone()
+    assert row is not None
+    return int(row["id"])
+
+
+def _set_host_tags(cur, host_id: int, tags: list[str]) -> None:
+    cur.execute("DELETE FROM ssh_host_tags WHERE host_id = %s", (host_id,))
+    for name in tags:
+        cur.execute(
+            "INSERT INTO ssh_host_tags (host_id, tag_id) VALUES (%s, %s)",
+            (host_id, _tag_id(cur, name)),
+        )
+
+
+def _host_tag_filter_sql(tag_name: str) -> tuple[str, tuple[Any, ...]]:
+    return (
+        "h.id IN ("
+        "SELECT ht.host_id FROM ssh_host_tags ht "
+        "INNER JOIN ssh_tags t ON t.id = ht.tag_id "
+        "WHERE t.name = %s"
+        ")",
+        (tag_name,),
     )
 
 
@@ -989,10 +1090,11 @@ def _host_select_sql(extra_where: str = "") -> str:
     return f"""
             SELECT h.id, h.folder_id, h.label, h.hostname, h.port, h.identity_id, h.jump_host_id,
                    h.created_at, h.updated_at, h.last_connected_at,
-                   COALESCE(i.label, 'One-time') AS identity_label, 
+                   COALESCE(i.label, 'One-time') AS identity_label,
                    COALESCE(i.auth_type, h.inline_identity_auth_type) AS identity_auth_type,
                    pf.label AS folder_label,
-                   jh.label AS jump_host_label
+                   jh.label AS jump_host_label,
+                   {_host_tag_list_sql()}
             FROM ssh_hosts h
             LEFT JOIN ssh_identities i ON i.id = h.identity_id
             LEFT JOIN ssh_folders pf ON pf.id = h.folder_id
@@ -1096,8 +1198,7 @@ def api_browse():
         except (TypeError, ValueError):
             return jsonify({"error": "invalid folder_id"}), 400
     q = (request.args.get("q") or "").strip()
-    esc = _like_escape(q) if q else ""
-    pat = f"%{esc}%" if q else ""
+    search_mode, search_term = _parse_search_query(q)
 
     with db_cursor() as (_, cur):
         breadcrumb: list[dict[str, Any]] = []
@@ -1108,6 +1209,30 @@ def api_browse():
             breadcrumb = _folder_breadcrumb_rows(cur, folder_id)
 
         if q:
+            if search_mode == "tag":
+                tag_name = _normalize_tag_name(search_term)
+                if tag_name is None:
+                    hosts: list[dict[str, Any]] = []
+                else:
+                    tag_where, tag_args = _host_tag_filter_sql(tag_name)
+                    cur.execute(
+                        _host_select_sql(f"WHERE {tag_where}") + " ORDER BY h.label",
+                        tag_args,
+                    )
+                    hosts = _serialize_host_rows(cur.fetchall())
+                return jsonify(
+                    {
+                        "breadcrumb": breadcrumb,
+                        "folders": [],
+                        "hosts": hosts,
+                        "search_active": True,
+                        "search_mode": "tag",
+                        "search_tag": tag_name,
+                    }
+                )
+
+            esc = _like_escape(search_term)
+            pat = f"%{esc}%"
             if folder_id is None:
                 cur.execute(
                     _host_select_sql(
@@ -1116,7 +1241,7 @@ def api_browse():
                     + " ORDER BY h.label",
                     (pat, pat),
                 )
-                hosts = cur.fetchall()
+                hosts = _serialize_host_rows(cur.fetchall())
             else:
                 ids = _folder_subtree_ids(cur, folder_id)
                 if not ids:
@@ -1131,13 +1256,14 @@ def api_browse():
                         + " ORDER BY h.label",
                         (*ids, pat, pat),
                     )
-                    hosts = cur.fetchall()
+                    hosts = _serialize_host_rows(cur.fetchall())
             return jsonify(
                 {
                     "breadcrumb": breadcrumb,
                     "folders": [],
                     "hosts": hosts,
                     "search_active": True,
+                    "search_mode": "text",
                 }
             )
 
@@ -1159,7 +1285,7 @@ def api_browse():
                 _host_select_sql("WHERE h.folder_id = %s") + " ORDER BY h.label",
                 (folder_id,),
             )
-        hosts = cur.fetchall()
+        hosts = _serialize_host_rows(cur.fetchall())
 
     return jsonify(
         {
@@ -1176,8 +1302,17 @@ def api_browse():
 def list_hosts():
     with db_cursor() as (_, cur):
         cur.execute(_host_select_sql("") + " ORDER BY h.label")
-        rows = cur.fetchall()
+        rows = _serialize_host_rows(cur.fetchall())
     return jsonify({"items": rows})
+
+
+@app.route("/api/tags", methods=["GET"])
+@require_auth("read:hosts")
+def list_tags():
+    with db_cursor() as (_, cur):
+        cur.execute("SELECT name FROM ssh_tags ORDER BY name")
+        rows = cur.fetchall()
+    return jsonify({"items": [r["name"] for r in rows]})
 
 
 @app.route("/api/hosts", methods=["POST"])
@@ -1194,6 +1329,12 @@ def create_host():
     
     if not label or not hostname:
         return jsonify({"error": "label, hostname required"}), 400
+
+    tags = None
+    if "tags" in body:
+        tags = _parse_host_tags(body.get("tags"))
+        if tags is None:
+            return jsonify({"error": "invalid tags"}), 400
     
     # Validate identity or inline credentials
     inline_auth_type = None
@@ -1255,6 +1396,8 @@ def create_host():
              inline_auth_type, inline_blob, inline_key_pass),
         )
         hid = cur.lastrowid
+        if tags is not None:
+            _set_host_tags(cur, int(hid), tags)
     return jsonify({"id": hid}), 201
 
 
@@ -1345,16 +1488,29 @@ def update_host(hid: int):
                     return jsonify({"error": "folder not found"}), 400
         fields.append("folder_id = %s")
         args.append(folder_id)
-    if not fields:
+
+    tags = None
+    if "tags" in body:
+        tags = _parse_host_tags(body.get("tags"))
+        if tags is None:
+            return jsonify({"error": "invalid tags"}), 400
+
+    if not fields and tags is None:
         return jsonify({"ok": True})
-    args.append(hid)
+
     with db_cursor() as (_, cur):
-        cur.execute(
-            f"UPDATE ssh_hosts SET {', '.join(fields)} WHERE id = %s",
-            tuple(args),
-        )
-        if cur.rowcount == 0:
+        cur.execute("SELECT id FROM ssh_hosts WHERE id = %s", (hid,))
+        if not cur.fetchone():
             return jsonify({"error": "not found"}), 404
+        if fields:
+            update_args = list(args)
+            update_args.append(hid)
+            cur.execute(
+                f"UPDATE ssh_hosts SET {', '.join(fields)} WHERE id = %s",
+                tuple(update_args),
+            )
+        if tags is not None:
+            _set_host_tags(cur, hid, tags)
     return jsonify({"ok": True})
 
 

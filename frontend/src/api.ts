@@ -65,6 +65,12 @@ export const api = {
     return d.items;
   },
 
+  async listTags(): Promise<string[]> {
+    const res = await fetch("/api/tags", { credentials: "include" });
+    const d = await handle<{ items: string[] }>(res);
+    return d.items;
+  },
+
   async listFoldersFlat(): Promise<FolderRow[]> {
     const res = await fetch("/api/folders", { credentials: "include" });
     const d = await handle<{ items: FolderRow[] }>(res);
@@ -312,6 +318,7 @@ export interface HostRow {
   identity_auth_type: string;
   folder_label?: string | null;
   last_connected_at?: string | null;
+  tags?: string[];
 }
 
 export interface IdentityRow {

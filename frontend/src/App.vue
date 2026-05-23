@@ -12,6 +12,7 @@ import {
 } from "@/api";
 import LoginForm from "@/components/LoginForm.vue";
 import TabContent from "@/components/TabContent.vue";
+import TagInput from "@/components/TagInput.vue";
 
 interface TabItem {
   id: string;
@@ -25,6 +26,7 @@ const appVersion = ref("unknown");
 const identities = ref<IdentityRow[]>([]);
 const allHosts = ref<HostRow[]>([]);
 const allFolders = ref<FolderRow[]>([]);
+const allTags = ref<string[]>([]);
 const browseFolders = ref<FolderRow[]>([]);
 const browseHosts = ref<HostRow[]>([]);
 const breadcrumb = ref<{ id: number; label: string }[]>([]);
@@ -93,6 +95,7 @@ const hostForm = ref({
   label: "",
   hostname: "",
   port: 22,
+  tags: "",
   use_inline_identity: false,
   identity_id: 0 as number,
   auth_type: "password" as "password" | "publickey",
@@ -107,6 +110,7 @@ const editHostForm = ref({
   label: "",
   hostname: "",
   port: 22,
+  tags: "",
   use_inline_identity: false,
   identity_id: 0,
   auth_type: "password" as "password" | "publickey",
@@ -132,6 +136,18 @@ function folderOptionLabel(id: number | null): string {
     cur = f.parent_id;
   }
   return parts.join(" / ") || `#${id}`;
+}
+
+function parseTagsInput(raw: string): string[] {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const part of raw.split(",")) {
+    const name = part.trim().toLowerCase().replace(/\s+/g, "");
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    tags.push(name);
+  }
+  return tags.sort();
 }
 
 function getSortedBrowseHosts(): HostRow[] {
@@ -173,12 +189,18 @@ function goToFolder(id: number | null) {
   void refreshBrowse();
 }
 
+function searchByTag(tag: string) {
+  searchQuery.value = `tag:${tag}`;
+  void refreshBrowse();
+}
+
 async function refreshData() {
   loadErr.value = "";
   try {
     identities.value = await api.listIdentities();
     allHosts.value = await api.listHosts();
     allFolders.value = await api.listFoldersFlat();
+    allTags.value = await api.listTags();
     if (!hostForm.value.identity_id && identities.value.length) {
       hostForm.value.identity_id = identities.value[0].id;
     }
@@ -488,6 +510,11 @@ async function submitHost() {
   } else {
     body.identity_id = f.identity_id;
   }
+
+  const tags = parseTagsInput(f.tags);
+  if (tags.length) {
+    body.tags = tags;
+  }
   
   await api.createHost(body);
   showHostForm.value = false;
@@ -495,6 +522,7 @@ async function submitHost() {
     label: "",
     hostname: "",
     port: 22,
+    tags: "",
     use_inline_identity: false,
     identity_id: hostForm.value.identity_id,
     auth_type: "password",
@@ -542,6 +570,7 @@ function openEditHost(h: HostRow) {
     label: h.label,
     hostname: h.hostname,
     port: h.port,
+    tags: (h.tags || []).join(", "),
     use_inline_identity: hasInlineIdentity,
     identity_id: h.identity_id || 0,
     auth_type: (h.identity_auth_type as "password" | "publickey") || "password",
@@ -580,6 +609,8 @@ async function submitEditHost() {
   } else {
     body.identity_id = f.identity_id;
   }
+
+  body.tags = parseTagsInput(f.tags);
   
   await api.patchHost(f.id, body);
   showEditHost.value = false;
@@ -718,7 +749,7 @@ async function deleteIdentityRow(id: number) {
           <input
             v-model="searchQuery"
             type="search"
-            placeholder="Search in this folder…"
+            placeholder="Search…"
             class="mt-2 w-full rounded-lg border border-slate-700 bg-surface-overlay px-2 py-1.5 text-xs text-white placeholder:text-slate-500 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             @input="onSearchInput"
           >
@@ -728,9 +759,11 @@ async function deleteIdentityRow(id: number) {
           >
             Matches in
             {{
-              currentFolderId == null
-                ? "all folders"
-                : "this folder and below"
+              searchQuery.trim().toLowerCase().startsWith("tag:")
+                ? "all folders (tag search)"
+                : currentFolderId == null
+                  ? "all folders"
+                  : "this folder and below"
             }}
           </p>
           <nav class="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-slate-400">
@@ -846,6 +879,21 @@ async function deleteIdentityRow(id: number) {
               >
                 via {{ h.jump_host_label || `#${h.jump_host_id}` }}
               </p>
+              <div
+                v-if="h.tags?.length"
+                class="mt-1 flex flex-wrap gap-1"
+              >
+                <button
+                  v-for="tag in h.tags"
+                  :key="tag"
+                  type="button"
+                  class="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-700 hover:text-accent"
+                  :title="`Search tag:${tag}`"
+                  @click.stop="searchByTag(tag)"
+                >
+                  {{ tag }}
+                </button>
+              </div>
               <p
                 v-if="searchActive"
                 class="mt-0.5 truncate text-[10px] text-slate-600"
@@ -1363,6 +1411,12 @@ async function deleteIdentityRow(id: number) {
           max="65535"
           class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
         />
+        <label class="mt-3 block text-xs uppercase text-slate-500">Tags</label>
+        <TagInput v-model="hostForm.tags" :suggestions="allTags" />
+        <p class="mt-1 text-[10px] text-slate-500">
+          Comma-separated. Search with
+          <code class="text-slate-400">tag:name</code>.
+        </p>
         <label class="mt-3 block text-xs uppercase text-slate-500">Credentials</label>
         <div class="mt-1 flex gap-2">
           <label class="flex items-center gap-2 cursor-pointer">
@@ -1574,6 +1628,12 @@ async function deleteIdentityRow(id: number) {
           max="65535"
           class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
         >
+        <label class="mt-3 block text-xs uppercase text-slate-500">Tags</label>
+        <TagInput v-model="editHostForm.tags" :suggestions="allTags" />
+        <p class="mt-1 text-[10px] text-slate-500">
+          Comma-separated. Search with
+          <code class="text-slate-400">tag:name</code>.
+        </p>
         <label class="mt-3 block text-xs uppercase text-slate-500">Folder</label>
         <select
           class="mt-1 w-full rounded border border-slate-700 bg-surface-overlay px-2 py-1.5 text-sm"
