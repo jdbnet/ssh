@@ -705,14 +705,14 @@ async function deleteIdentityRow(id: number) {
       <div class="flex items-center gap-2">
         <button
           type="button"
-          class="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
+          class="hidden rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white md:inline-flex"
           @click="openApiKeys"
         >
           API keys
         </button>
         <button
           type="button"
-          class="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
+          class="hidden rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white md:inline-flex"
           @click="openAuditLog"
         >
           Connection audit
