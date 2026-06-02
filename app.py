@@ -1743,13 +1743,12 @@ def update_api_key(kid: int):
 
 @app.route("/api/api-keys/<int:kid>", methods=["DELETE"])
 @require_login
-def revoke_api_key(kid: int):
+def delete_api_key(kid: int):
     with db_cursor() as (_, cur):
         cur.execute(
             """
-            UPDATE api_keys
-            SET revoked_at = CURRENT_TIMESTAMP
-            WHERE id = %s AND revoked_at IS NULL
+            DELETE FROM api_keys
+            WHERE id = %s
             """,
             (kid,),
         )

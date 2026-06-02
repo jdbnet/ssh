@@ -366,14 +366,14 @@ async function submitApiKey() {
   }
 }
 
-async function revokeApiKey(id: number, label: string) {
-  if (!confirm(`Revoke API key "${label}"? This cannot be undone.`)) return;
+async function deleteApiKey(id: number, label: string) {
+  if (!confirm(`Delete API key "${label}"? This cannot be undone.`)) return;
   apiKeysErr.value = "";
   try {
-    await api.revokeApiKey(id);
+    await api.deleteApiKey(id);
     await refreshApiKeys();
   } catch (e) {
-    apiKeysErr.value = e instanceof Error ? e.message : "Failed to revoke API key";
+    apiKeysErr.value = e instanceof Error ? e.message : "Failed to delete API key";
   }
 }
 
@@ -1142,9 +1142,9 @@ async function deleteIdentityRow(id: number) {
                     v-if="row.active"
                     type="button"
                     class="rounded px-2 py-1 text-red-400 hover:bg-slate-800"
-                    @click="revokeApiKey(row.id, row.label)"
+                    @click="deleteApiKey(row.id, row.label)"
                   >
-                    Revoke
+                    Delete
                   </button>
                 </td>
               </tr>
