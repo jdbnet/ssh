@@ -226,7 +226,7 @@ export const api = {
     return handle(res);
   },
 
-  async revokeApiKey(id: number): Promise<void> {
+  async deleteApiKey(id: number): Promise<void> {
     const res = await fetch(`/api/api-keys/${id}`, {
       method: "DELETE",
       credentials: "include",

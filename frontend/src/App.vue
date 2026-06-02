@@ -366,14 +366,14 @@ async function submitApiKey() {
   }
 }
 
-async function revokeApiKey(id: number, label: string) {
-  if (!confirm(`Revoke API key "${label}"? This cannot be undone.`)) return;
+async function deleteApiKey(id: number, label: string) {
+  if (!confirm(`Delete API key "${label}"? This cannot be undone.`)) return;
   apiKeysErr.value = "";
   try {
-    await api.revokeApiKey(id);
+    await api.deleteApiKey(id);
     await refreshApiKeys();
   } catch (e) {
-    apiKeysErr.value = e instanceof Error ? e.message : "Failed to revoke API key";
+    apiKeysErr.value = e instanceof Error ? e.message : "Failed to delete API key";
   }
 }
 
@@ -692,27 +692,29 @@ async function deleteIdentityRow(id: number) {
             />
           </svg>
         </button>
-        <a 
-          href="https://git.jdbnet.co.uk/jamie/ssh" 
-          target="_blank" 
-          rel="noopener noreferrer"
-          class="flex items-center gap-2 truncate"
-        >
+        <div class="flex items-center gap-2 truncate">
           <span class="truncate text-sm font-semibold text-white">JDB-NET SSH</span>
-          <span class="truncate text-xs text-slate-400 hover:text-slate-300">{{ appVersion }}</span>
-        </a>
+          <a
+            href="https://git.jdbnet.co.uk/jamie/ssh"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="truncate text-xs text-slate-400 hover:text-slate-300"
+          >
+            {{ appVersion }}
+          </a>
+        </div>
       </div>
       <div class="flex items-center gap-2">
         <button
           type="button"
-          class="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
+          class="hidden rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white md:inline-flex"
           @click="openApiKeys"
         >
           API keys
         </button>
         <button
           type="button"
-          class="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
+          class="hidden rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white md:inline-flex"
           @click="openAuditLog"
         >
           Connection audit
@@ -1139,12 +1141,11 @@ async function deleteIdentityRow(id: number) {
                 <td class="px-2 py-2">{{ apiKeyStatus(row) }}</td>
                 <td class="px-2 py-2 text-right">
                   <button
-                    v-if="row.active"
                     type="button"
                     class="rounded px-2 py-1 text-red-400 hover:bg-slate-800"
-                    @click="revokeApiKey(row.id, row.label)"
+                    @click="deleteApiKey(row.id, row.label)"
                   >
-                    Revoke
+                    Delete
                   </button>
                 </td>
               </tr>
