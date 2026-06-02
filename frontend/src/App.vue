@@ -1139,7 +1139,6 @@ async function deleteIdentityRow(id: number) {
                 <td class="px-2 py-2">{{ apiKeyStatus(row) }}</td>
                 <td class="px-2 py-2 text-right">
                   <button
-                    v-if="row.active"
                     type="button"
                     class="rounded px-2 py-1 text-red-400 hover:bg-slate-800"
                     @click="deleteApiKey(row.id, row.label)"
