@@ -33,8 +33,42 @@ const breadcrumb = ref<{ id: number; label: string }[]>([]);
 const searchActive = ref(false);
 const currentFolderId = ref<number | null>(null);
 const searchQuery = ref("");
-const tabs = ref<TabItem[]>([]);
-const activeTabId = ref<string | null>(null);
+const tabs = ref<{ id: string; hostId: number; label: string }[]>([]);
+const activePanes = ref<string[]>([]);
+const draggedTabId = ref<string | null>(null);
+
+function onTabDragStart(id: string) {
+  draggedTabId.value = id;
+}
+
+function onTabDrop(targetId: string) {
+  if (!draggedTabId.value || draggedTabId.value === targetId) return;
+  const from = tabs.value.findIndex((t) => t.id === draggedTabId.value);
+  const to = tabs.value.findIndex((t) => t.id === targetId);
+  if (from === -1 || to === -1) return;
+  const [t] = tabs.value.splice(from, 1);
+  tabs.value.splice(to, 0, t);
+  draggedTabId.value = null;
+}
+
+function onTabDragEnd() {
+  draggedTabId.value = null;
+}
+
+function onSplitDrop() {
+  if (!draggedTabId.value || activePanes.value.includes(draggedTabId.value)) {
+    draggedTabId.value = null;
+    return;
+  }
+  if (activePanes.value.length >= 2) {
+    activePanes.value = [activePanes.value[0], draggedTabId.value];
+  } else if (activePanes.value.length === 1) {
+    activePanes.value.push(draggedTabId.value);
+  } else {
+    activePanes.value = [draggedTabId.value];
+  }
+  draggedTabId.value = null;
+}
 const loadErr = ref("");
 const hostSortOrder = ref<"name" | "last_connected">("name");
 /** Narrow viewports: slide-over hosts panel; md+ sidebar stays visible */
@@ -236,9 +270,10 @@ async function onLoggedIn() {
 
 async function logout() {
   await api.logout();
-  tabs.value = [];
-  activeTabId.value = null;
-  loggedIn.value = false;
+    tabs.value = [];
+    activePanes.value = [];
+    allHosts.value = [];
+    loggedIn.value = false;
 }
 
 function fmtDate(ts: string | null): string {
@@ -403,7 +438,7 @@ function fmtScopes(scopes: string[]): string {
 function openTab(h: HostRow) {
   const id = crypto.randomUUID();
   tabs.value.push({ id, hostId: h.id, label: h.label });
-  activeTabId.value = id;
+  activePanes.value = [id];
   if (window.matchMedia("(max-width: 767px)").matches) {
     sidebarOpen.value = false;
   }
@@ -415,8 +450,9 @@ function toggleSidebar() {
 
 function closeTab(id: string) {
   tabs.value = tabs.value.filter((t) => t.id !== id);
-  if (activeTabId.value === id) {
-    activeTabId.value = tabs.value.length ? tabs.value[tabs.value.length - 1].id : null;
+  activePanes.value = activePanes.value.filter((p) => p !== id);
+  if (activePanes.value.length === 0 && tabs.value.length) {
+    activePanes.value = [tabs.value[tabs.value.length - 1].id];
   }
 }
 
@@ -641,10 +677,9 @@ async function deleteHostRow(id: number) {
   await api.deleteHost(id);
   allHosts.value = allHosts.value.filter((h) => h.id !== id);
   tabs.value = tabs.value.filter((t) => t.hostId !== id);
-  if (!tabs.value.some((t) => t.id === activeTabId.value)) {
-    activeTabId.value = tabs.value.length
-      ? tabs.value[tabs.value.length - 1].id
-      : null;
+  activePanes.value = activePanes.value.filter(p => tabs.value.some(t => t.id === p));
+  if (activePanes.value.length === 0 && tabs.value.length) {
+    activePanes.value = [tabs.value[tabs.value.length - 1].id];
   }
   await refreshBrowse();
 }
@@ -1003,13 +1038,19 @@ async function deleteIdentityRow(id: number) {
               v-for="t in tabs"
               :key="t.id"
               type="button"
-              class="flex items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-sm"
-              :class="
-                t.id === activeTabId
+              draggable="true"
+              @dragstart="onTabDragStart(t.id)"
+              @dragover.prevent
+              @drop="onTabDrop(t.id)"
+              @dragend="onTabDragEnd"
+              class="flex items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-sm transition-colors"
+              :class="[
+                activePanes.includes(t.id)
                   ? 'border-slate-700 bg-surface text-white'
-                  : 'border-transparent bg-transparent text-slate-400 hover:text-white'
-              "
-              @click="activeTabId = t.id"
+                  : 'border-transparent bg-transparent text-slate-400 hover:text-white',
+                draggedTabId && draggedTabId !== t.id ? 'hover:bg-slate-800/50' : ''
+              ]"
+              @click="activePanes = [t.id]"
             >
               {{ t.label }}
               <span
@@ -1018,18 +1059,27 @@ async function deleteIdentityRow(id: number) {
               >×</span>
             </button>
           </div>
-          <div class="min-h-0 flex-1 p-2 md:p-3">
+          <div class="relative min-h-0 flex-1 flex flex-row gap-2 p-2 md:p-3">
             <div
               v-for="t in tabs"
-              v-show="t.id === activeTabId"
+              v-show="activePanes.includes(t.id)"
               :key="t.id"
-              class="h-full min-h-0"
+              class="flex-1 min-w-0 h-full"
             >
               <TabContent
                 :host-id="t.hostId"
-                :visible="t.id === activeTabId"
+                :visible="activePanes.includes(t.id)"
                 :show-sftp="showSftpPanel"
               />
+            </div>
+            
+            <div 
+              v-if="draggedTabId && activePanes.length === 1 && !activePanes.includes(draggedTabId)"
+              class="absolute inset-y-2 right-2 md:inset-y-3 md:right-3 w-[calc(50%-0.25rem)] z-50 flex items-center justify-center rounded-lg border-2 border-dashed border-accent bg-accent/10 backdrop-blur-[2px] transition-all"
+              @dragover.prevent
+              @drop="onSplitDrop"
+            >
+              <span class="font-medium text-accent">Drop to split side-by-side</span>
             </div>
           </div>
         </template>
