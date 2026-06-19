@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { Folder, Pencil, Trash2, Radio } from "lucide-vue-next";
+import { onMounted, onUnmounted, ref } from "vue";
+import { Folder, Pencil, Trash2, Radio, ChevronDown } from "lucide-vue-next";
 import {
   api,
   type HostRow,
@@ -9,10 +9,12 @@ import {
   type ConnectionAuditRow,
   type ApiKeyRow,
   type ApiKeyScopeDef,
+  type SnippetRow,
 } from "@/api";
 import LoginForm from "@/components/LoginForm.vue";
 import TabContent from "@/components/TabContent.vue";
 import TagInput from "@/components/TagInput.vue";
+import SnippetForm from "@/components/SnippetForm.vue";
 
 interface TabItem {
   id: string;
@@ -51,6 +53,79 @@ function handleBroadcast(data: string, sourceId: string) {
       tabRefs.value[paneId].sendData(data);
     }
   }
+}
+
+const snippets = ref<SnippetRow[]>([]);
+const showSnippetsMenu = ref(false);
+const showSnippetForm = ref(false);
+const editingSnippet = ref<SnippetRow | null>(null);
+const snippetsButtonRef = ref<HTMLElement | null>(null);
+const snippetsMenuRef = ref<HTMLElement | null>(null);
+
+function closeSnippetsMenu(e: MouseEvent) {
+  if (
+    showSnippetsMenu.value &&
+    !snippetsButtonRef.value?.contains(e.target as Node) &&
+    !snippetsMenuRef.value?.contains(e.target as Node)
+  ) {
+    showSnippetsMenu.value = false;
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("click", closeSnippetsMenu);
+});
+
+onUnmounted(() => {
+  document.removeEventListener("click", closeSnippetsMenu);
+});
+
+async function loadSnippets() {
+  try {
+    snippets.value = await api.listSnippets();
+  } catch (err: any) {
+    loadErr.value = err.message;
+  }
+}
+
+function runSnippet(command: string) {
+  showSnippetsMenu.value = false;
+  const targetPanes = broadcastMode.value ? activePanes.value : [activePanes.value[0]];
+  for (const paneId of targetPanes) {
+    if (paneId && tabRefs.value[paneId]) {
+      tabRefs.value[paneId].sendData(command + "\r");
+    }
+  }
+}
+
+async function saveSnippet(data: { label: string; command: string }) {
+  try {
+    if (editingSnippet.value) {
+      await api.updateSnippet(editingSnippet.value.id, data);
+    } else {
+      await api.createSnippet(data);
+    }
+    showSnippetForm.value = false;
+    await loadSnippets();
+  } catch (err: any) {
+    alert(err.message);
+  }
+}
+
+async function deleteSnippet(id: number) {
+  if (!confirm("Are you sure you want to delete this snippet?")) return;
+  try {
+    await api.deleteSnippet(id);
+    await loadSnippets();
+  } catch (err: any) {
+    alert(err.message);
+  }
+}
+
+function openEditSnippet(s?: SnippetRow) {
+  showSnippetsMenu.value = false;
+  editingSnippet.value = s || null;
+  showSnippetForm.value = true;
 }
 
 function onTabDragStart(id: string) {
@@ -255,6 +330,7 @@ async function refreshData() {
     allHosts.value = await api.listHosts();
     allFolders.value = await api.listFoldersFlat();
     allTags.value = await api.listTags();
+    await loadSnippets();
     if (!hostForm.value.identity_id && identities.value.length) {
       hostForm.value.identity_id = identities.value[0].id;
     }
@@ -773,6 +849,59 @@ async function deleteIdentityRow(id: number) {
             Broadcast
           </span>
         </button>
+        <div class="relative hidden md:block">
+          <button
+            ref="snippetsButtonRef"
+            type="button"
+            class="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white inline-flex items-center gap-1"
+            @click="showSnippetsMenu = !showSnippetsMenu"
+          >
+            Snippets
+            <ChevronDown class="h-3 w-3" />
+          </button>
+          <div
+            v-if="showSnippetsMenu"
+            ref="snippetsMenuRef"
+            class="absolute right-0 top-full mt-2 w-64 rounded-xl border border-slate-700 bg-surface shadow-xl z-50 overflow-hidden"
+          >
+            <div class="max-h-64 overflow-y-auto p-1">
+              <div v-if="snippets.length === 0" class="p-3 text-center text-xs text-slate-500">
+                No snippets saved.
+              </div>
+              <div
+                v-for="s in snippets"
+                :key="s.id"
+                class="flex items-center justify-between group rounded-lg px-2 py-1.5 hover:bg-slate-800"
+              >
+                <button
+                  type="button"
+                  class="flex-1 text-left text-sm text-white truncate"
+                  @click="runSnippet(s.command)"
+                  :title="s.command"
+                >
+                  {{ s.label }}
+                </button>
+                <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button type="button" class="text-slate-400 hover:text-white p-1" @click="openEditSnippet(s)">
+                    <Pencil class="h-3 w-3" />
+                  </button>
+                  <button type="button" class="text-red-400 hover:text-red-300 p-1" @click="deleteSnippet(s.id)">
+                    <Trash2 class="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="border-t border-slate-700 p-1">
+              <button
+                type="button"
+                class="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
+                @click="openEditSnippet()"
+              >
+                + Add new snippet...
+              </button>
+            </div>
+          </div>
+        </div>
         <button
           type="button"
           class="hidden rounded-lg px-3 py-1.5 text-xs md:inline-flex"
@@ -1116,6 +1245,13 @@ async function deleteIdentityRow(id: number) {
         </template>
       </main>
     </div>
+
+    <SnippetForm
+      v-if="showSnippetForm"
+      :snippet="editingSnippet"
+      @save="saveSnippet"
+      @cancel="showSnippetForm = false"
+    />
 
     <div
       v-if="showApiKeys"
