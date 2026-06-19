@@ -49,6 +49,10 @@ const showFolderForm = ref(false);
 const showEditHost = ref(false);
 const showAuditLog = ref(false);
 const showApiKeys = ref(false);
+const showSftpPanel = ref(false);
+function toggleSftp() {
+  showSftpPanel.value = !showSftpPanel.value;
+}
 const auditLoading = ref(false);
 const auditErr = ref("");
 const auditRows = ref<ConnectionAuditRow[]>([]);
@@ -707,6 +711,14 @@ async function deleteIdentityRow(id: number) {
       <div class="flex items-center gap-2">
         <button
           type="button"
+          class="hidden rounded-lg px-3 py-1.5 text-xs md:inline-flex"
+          :class="showSftpPanel ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+          @click="toggleSftp"
+        >
+          SFTP
+        </button>
+        <button
+          type="button"
           class="hidden rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white md:inline-flex"
           @click="openApiKeys"
         >
@@ -1016,6 +1028,7 @@ async function deleteIdentityRow(id: number) {
               <TabContent
                 :host-id="t.hostId"
                 :visible="t.id === activeTabId"
+                :show-sftp="showSftpPanel"
               />
             </div>
           </div>

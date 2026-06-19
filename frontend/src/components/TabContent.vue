@@ -14,6 +14,7 @@ import SftpPanel from "./SftpPanel.vue";
 const props = defineProps<{
   hostId: number;
   visible: boolean;
+  showSftp: boolean;
 }>();
 
 const termEl = ref<HTMLElement | null>(null);
@@ -187,17 +188,19 @@ watch(
         class="h-full min-h-[320px] rounded-lg border border-slate-800 bg-[#0a0e12] p-1"
       />
     </div>
-    <div
-      v-if="connId"
-      class="hidden w-80 shrink-0 flex-col border-l border-slate-800 md:flex"
-    >
-      <SftpPanel :conn-id="connId" />
-    </div>
-    <div
-      v-else
-      class="hidden w-72 shrink-0 items-center justify-center border-l border-slate-800 bg-surface-raised text-xs text-slate-500 md:flex"
-    >
-      SFTP unlocks when the shell session is ready.
-    </div>
+    <template v-if="showSftp">
+      <div
+        v-if="connId"
+        class="hidden w-80 shrink-0 flex-col border-l border-slate-800 md:flex"
+      >
+        <SftpPanel :conn-id="connId" />
+      </div>
+      <div
+        v-else
+        class="hidden w-72 shrink-0 items-center justify-center border-l border-slate-800 bg-surface-raised text-xs text-slate-500 md:flex"
+      >
+        SFTP unlocks when the shell session is ready.
+      </div>
+    </template>
   </div>
 </template>

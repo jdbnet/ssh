@@ -12,5 +12,14 @@ else
     source venv/bin/activate
 fi
 
-cd frontend && npm run build && cd ..
+echo "Building frontend..."
+(
+    cd frontend
+    if [ ! -d "node_modules" ]; then
+        echo "Installing frontend dependencies..."
+        npm install
+    fi
+    npm run build
+)
+
 exec gunicorn --bind 0.0.0.0:5000 --workers 1 --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker app:app --log-level info
