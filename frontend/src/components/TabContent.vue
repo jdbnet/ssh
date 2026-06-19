@@ -17,6 +17,18 @@ const props = defineProps<{
   showSftp: boolean;
 }>();
 
+const emit = defineEmits<{
+  (e: 'broadcast-data', data: string): void;
+}>();
+
+defineExpose({
+  sendData: (data: string) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(new TextEncoder().encode(data));
+    }
+  }
+});
+
 const termEl = ref<HTMLElement | null>(null);
 const status = ref("Connecting…");
 const connId = ref<string | null>(null);
@@ -97,6 +109,7 @@ onMounted(async () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(new TextEncoder().encode(data));
     }
+    emit("broadcast-data", data);
   });
 
   term.onResize(({ cols, rows }) => {

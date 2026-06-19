@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { Folder, Pencil, Trash2 } from "lucide-vue-next";
+import { Folder, Pencil, Trash2, Radio } from "lucide-vue-next";
 import {
   api,
   type HostRow,
@@ -36,6 +36,22 @@ const searchQuery = ref("");
 const tabs = ref<{ id: string; hostId: number; label: string }[]>([]);
 const activePanes = ref<string[]>([]);
 const draggedTabId = ref<string | null>(null);
+
+const broadcastMode = ref(false);
+const tabRefs = ref<Record<string, any>>({});
+function setTabRef(el: any, id: string) {
+  if (el) tabRefs.value[id] = el;
+  else delete tabRefs.value[id];
+}
+
+function handleBroadcast(data: string, sourceId: string) {
+  if (!broadcastMode.value) return;
+  for (const paneId of activePanes.value) {
+    if (paneId !== sourceId && tabRefs.value[paneId]) {
+      tabRefs.value[paneId].sendData(data);
+    }
+  }
+}
 
 function onTabDragStart(id: string) {
   draggedTabId.value = id;
@@ -745,6 +761,19 @@ async function deleteIdentityRow(id: number) {
       </div>
       <div class="flex items-center gap-2">
         <button
+          v-if="activePanes.length > 1"
+          type="button"
+          class="hidden rounded-lg px-3 py-1.5 text-xs md:inline-flex border transition-colors"
+          :class="broadcastMode ? 'border-accent bg-accent/10 text-accent' : 'border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white'"
+          @click="broadcastMode = !broadcastMode"
+          title="Broadcast input to all visible terminals"
+        >
+          <span class="flex items-center gap-2">
+            <Radio class="h-3.5 w-3.5" />
+            Broadcast
+          </span>
+        </button>
+        <button
           type="button"
           class="hidden rounded-lg px-3 py-1.5 text-xs md:inline-flex"
           :class="showSftpPanel ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
@@ -1067,9 +1096,11 @@ async function deleteIdentityRow(id: number) {
               class="flex-1 min-w-0 h-full"
             >
               <TabContent
+                :ref="(el) => setTabRef(el, t.id)"
                 :host-id="t.hostId"
                 :visible="activePanes.includes(t.id)"
                 :show-sftp="showSftpPanel"
+                @broadcast-data="(data: string) => handleBroadcast(data, t.id)"
               />
             </div>
             
