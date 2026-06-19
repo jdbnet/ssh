@@ -79,12 +79,13 @@ onMounted(async () => {
 
   term = new Terminal({
     cursorBlink: true,
-    fontFamily: "IBM Plex Mono, monospace",
+    fontFamily: "DM Mono, ui-monospace, monospace",
     fontSize: 14,
     theme: {
-      background: "#0a0e12",
-      foreground: "#e2e8f0",
-      cursor: "#3d9aed",
+      background: "#0d1117",
+      foreground: "#e6edf3",
+      cursor: "#1ebe8a",
+      selectionBackground: "rgba(30, 190, 138, 0.3)",
     },
   });
   fit = new FitAddon();
@@ -185,7 +186,7 @@ watch(
       </div>
       <div
         ref="termEl"
-        class="h-full min-h-[320px] rounded-lg border border-slate-800 bg-[#0a0e12] p-1"
+        class="h-full min-h-[320px] rounded-lg border border-slate-800 bg-[#0d1117] p-1"
       />
     </div>
     <template v-if="showSftp">
