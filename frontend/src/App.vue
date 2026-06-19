@@ -697,7 +697,7 @@ async function deleteIdentityRow(id: number) {
           </svg>
         </button>
         <div class="flex items-center gap-2 truncate">
-          <span class="truncate text-sm font-semibold text-white">JDB-NET SSH</span>
+          <span class="truncate text-sm font-semibold text-white">SSH</span>
           <a
             href="https://git.jdbnet.co.uk/jamie/ssh"
             target="_blank"
