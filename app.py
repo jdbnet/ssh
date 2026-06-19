@@ -164,6 +164,13 @@ def init_db():
       CONSTRAINT fk_host_tags_tag FOREIGN KEY (tag_id)
         REFERENCES ssh_tags(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS ssh_snippets (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      label VARCHAR(255) NOT NULL,
+      command TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );
     """
     with db_cursor() as (_, cur):
         for stmt in ddl.split(";"):
@@ -1098,6 +1105,80 @@ def delete_identity(iid: int):
             }), 409
         
         cur.execute("DELETE FROM ssh_identities WHERE id = %s", (iid,))
+        if cur.rowcount == 0:
+            return jsonify({"error": "not found"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/snippets", methods=["GET"])
+@require_auth("read:hosts")
+def list_snippets():
+    with db_cursor() as (_, cur):
+        cur.execute("SELECT id, label, command, created_at, updated_at FROM ssh_snippets ORDER BY label ASC")
+        rows = cur.fetchall()
+    return jsonify({"items": rows})
+
+
+@app.route("/api/snippets", methods=["POST"])
+@require_auth("write:hosts")
+def create_snippet():
+    req = request.get_json()
+    if not req:
+        return jsonify({"error": "invalid json"}), 400
+    label = (req.get("label") or "").strip()
+    command = req.get("command") or ""
+    if not label or not command:
+        return jsonify({"error": "label and command required"}), 400
+    with db_cursor() as (_, cur):
+        cur.execute(
+            "INSERT INTO ssh_snippets (label, command) VALUES (%s, %s)",
+            (label, command),
+        )
+        sid = cur.lastrowid
+    return jsonify({"id": sid}), 201
+
+
+@app.route("/api/snippets/<int:sid>", methods=["PATCH"])
+@require_auth("write:hosts")
+def update_snippet(sid: int):
+    req = request.get_json()
+    if not req:
+        return jsonify({"error": "invalid json"}), 400
+    
+    updates = []
+    args = []
+    if "label" in req:
+        label = (req["label"] or "").strip()
+        if not label:
+            return jsonify({"error": "label cannot be empty"}), 400
+        updates.append("label = %s")
+        args.append(label)
+    if "command" in req:
+        cmd = req["command"] or ""
+        if not cmd:
+            return jsonify({"error": "command cannot be empty"}), 400
+        updates.append("command = %s")
+        args.append(cmd)
+    
+    if not updates:
+        return jsonify({"ok": True})
+    
+    args.append(sid)
+    with db_cursor() as (_, cur):
+        cur.execute(
+            f"UPDATE ssh_snippets SET {', '.join(updates)} WHERE id = %s",
+            tuple(args),
+        )
+        if cur.rowcount == 0:
+            return jsonify({"error": "not found"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/snippets/<int:sid>", methods=["DELETE"])
+@require_auth("write:hosts")
+def delete_snippet(sid: int):
+    with db_cursor() as (_, cur):
+        cur.execute("DELETE FROM ssh_snippets WHERE id = %s", (sid,))
         if cur.rowcount == 0:
             return jsonify({"error": "not found"}), 404
     return jsonify({"ok": True})

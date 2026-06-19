@@ -5,18 +5,28 @@ export default {
     extend: {
       colors: {
         surface: {
-          DEFAULT: "#0f1419",
-          raised: "#151c24",
-          overlay: "#1a232e",
+          DEFAULT: "#0d1117",
+          raised: "#161b22",
+          overlay: "#21262d",
         },
         accent: {
-          DEFAULT: "#3d9aed",
-          muted: "#2a6fa3",
+          DEFAULT: "#1ebe8a",
+          muted: "#16966b",
+        },
+        slate: {
+          200: "#e6edf3",
+          300: "#c9d1d9",
+          400: "#8b949e",
+          500: "#6e7681",
+          600: "#484f58",
+          700: "#30363d",
+          800: "#21262d",
+          900: "#161b22",
         },
       },
       fontFamily: {
-        sans: ["IBM Plex Sans", "system-ui", "sans-serif"],
-        mono: ["IBM Plex Mono", "ui-monospace", "monospace"],
+        sans: ["Space Grotesk", "system-ui", "sans-serif"],
+        mono: ["DM Mono", "ui-monospace", "monospace"],
       },
     },
   },

@@ -31,7 +31,7 @@ async function submit() {
       class="w-full max-w-md rounded-xl border border-slate-800 bg-surface-raised p-8 shadow-xl"
     >
       <h1 class="font-sans text-2xl font-semibold tracking-tight text-white">
-        JDB-NET SSH
+        SSH
       </h1>
       <p class="mt-1 text-sm text-slate-400">
         Sign in to manage connections and open terminals.

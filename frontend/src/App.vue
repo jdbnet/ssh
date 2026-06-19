@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { Folder, Pencil, Trash2 } from "lucide-vue-next";
+import { onMounted, onUnmounted, ref } from "vue";
+import { Folder, Pencil, Trash2, Radio, ChevronDown } from "lucide-vue-next";
 import {
   api,
   type HostRow,
@@ -9,10 +9,12 @@ import {
   type ConnectionAuditRow,
   type ApiKeyRow,
   type ApiKeyScopeDef,
+  type SnippetRow,
 } from "@/api";
 import LoginForm from "@/components/LoginForm.vue";
 import TabContent from "@/components/TabContent.vue";
 import TagInput from "@/components/TagInput.vue";
+import SnippetForm from "@/components/SnippetForm.vue";
 
 interface TabItem {
   id: string;
@@ -33,8 +35,131 @@ const breadcrumb = ref<{ id: number; label: string }[]>([]);
 const searchActive = ref(false);
 const currentFolderId = ref<number | null>(null);
 const searchQuery = ref("");
-const tabs = ref<TabItem[]>([]);
-const activeTabId = ref<string | null>(null);
+const tabs = ref<{ id: string; hostId: number; label: string }[]>([]);
+const activePanes = ref<string[]>([]);
+const draggedTabId = ref<string | null>(null);
+
+const broadcastMode = ref(false);
+const tabRefs = ref<Record<string, any>>({});
+function setTabRef(el: any, id: string) {
+  if (el) tabRefs.value[id] = el;
+  else delete tabRefs.value[id];
+}
+
+function handleBroadcast(data: string, sourceId: string) {
+  if (!broadcastMode.value) return;
+  for (const paneId of activePanes.value) {
+    if (paneId !== sourceId && tabRefs.value[paneId]) {
+      tabRefs.value[paneId].sendData(data);
+    }
+  }
+}
+
+const snippets = ref<SnippetRow[]>([]);
+const showSnippetsMenu = ref(false);
+const showSnippetForm = ref(false);
+const editingSnippet = ref<SnippetRow | null>(null);
+const snippetsButtonRef = ref<HTMLElement | null>(null);
+const snippetsMenuRef = ref<HTMLElement | null>(null);
+
+function closeSnippetsMenu(e: MouseEvent) {
+  if (
+    showSnippetsMenu.value &&
+    !snippetsButtonRef.value?.contains(e.target as Node) &&
+    !snippetsMenuRef.value?.contains(e.target as Node)
+  ) {
+    showSnippetsMenu.value = false;
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("click", closeSnippetsMenu);
+});
+
+onUnmounted(() => {
+  document.removeEventListener("click", closeSnippetsMenu);
+});
+
+async function loadSnippets() {
+  try {
+    snippets.value = await api.listSnippets();
+  } catch (err: any) {
+    loadErr.value = err.message;
+  }
+}
+
+function runSnippet(command: string) {
+  showSnippetsMenu.value = false;
+  const targetPanes = broadcastMode.value ? activePanes.value : [activePanes.value[0]];
+  for (const paneId of targetPanes) {
+    if (paneId && tabRefs.value[paneId]) {
+      tabRefs.value[paneId].sendData(command + "\r");
+    }
+  }
+}
+
+async function saveSnippet(data: { label: string; command: string }) {
+  try {
+    if (editingSnippet.value) {
+      await api.updateSnippet(editingSnippet.value.id, data);
+    } else {
+      await api.createSnippet(data);
+    }
+    showSnippetForm.value = false;
+    await loadSnippets();
+  } catch (err: any) {
+    alert(err.message);
+  }
+}
+
+async function deleteSnippet(id: number) {
+  if (!confirm("Are you sure you want to delete this snippet?")) return;
+  try {
+    await api.deleteSnippet(id);
+    await loadSnippets();
+  } catch (err: any) {
+    alert(err.message);
+  }
+}
+
+function openEditSnippet(s?: SnippetRow) {
+  showSnippetsMenu.value = false;
+  editingSnippet.value = s || null;
+  showSnippetForm.value = true;
+}
+
+function onTabDragStart(id: string) {
+  draggedTabId.value = id;
+}
+
+function onTabDrop(targetId: string) {
+  if (!draggedTabId.value || draggedTabId.value === targetId) return;
+  const from = tabs.value.findIndex((t) => t.id === draggedTabId.value);
+  const to = tabs.value.findIndex((t) => t.id === targetId);
+  if (from === -1 || to === -1) return;
+  const [t] = tabs.value.splice(from, 1);
+  tabs.value.splice(to, 0, t);
+  draggedTabId.value = null;
+}
+
+function onTabDragEnd() {
+  draggedTabId.value = null;
+}
+
+function onSplitDrop() {
+  if (!draggedTabId.value || activePanes.value.includes(draggedTabId.value)) {
+    draggedTabId.value = null;
+    return;
+  }
+  if (activePanes.value.length >= 2) {
+    activePanes.value = [activePanes.value[0], draggedTabId.value];
+  } else if (activePanes.value.length === 1) {
+    activePanes.value.push(draggedTabId.value);
+  } else {
+    activePanes.value = [draggedTabId.value];
+  }
+  draggedTabId.value = null;
+}
 const loadErr = ref("");
 const hostSortOrder = ref<"name" | "last_connected">("name");
 /** Narrow viewports: slide-over hosts panel; md+ sidebar stays visible */
@@ -49,6 +174,10 @@ const showFolderForm = ref(false);
 const showEditHost = ref(false);
 const showAuditLog = ref(false);
 const showApiKeys = ref(false);
+const showSftpPanel = ref(false);
+function toggleSftp() {
+  showSftpPanel.value = !showSftpPanel.value;
+}
 const auditLoading = ref(false);
 const auditErr = ref("");
 const auditRows = ref<ConnectionAuditRow[]>([]);
@@ -201,6 +330,7 @@ async function refreshData() {
     allHosts.value = await api.listHosts();
     allFolders.value = await api.listFoldersFlat();
     allTags.value = await api.listTags();
+    await loadSnippets();
     if (!hostForm.value.identity_id && identities.value.length) {
       hostForm.value.identity_id = identities.value[0].id;
     }
@@ -232,9 +362,10 @@ async function onLoggedIn() {
 
 async function logout() {
   await api.logout();
-  tabs.value = [];
-  activeTabId.value = null;
-  loggedIn.value = false;
+    tabs.value = [];
+    activePanes.value = [];
+    allHosts.value = [];
+    loggedIn.value = false;
 }
 
 function fmtDate(ts: string | null): string {
@@ -399,7 +530,7 @@ function fmtScopes(scopes: string[]): string {
 function openTab(h: HostRow) {
   const id = crypto.randomUUID();
   tabs.value.push({ id, hostId: h.id, label: h.label });
-  activeTabId.value = id;
+  activePanes.value = [id];
   if (window.matchMedia("(max-width: 767px)").matches) {
     sidebarOpen.value = false;
   }
@@ -411,8 +542,9 @@ function toggleSidebar() {
 
 function closeTab(id: string) {
   tabs.value = tabs.value.filter((t) => t.id !== id);
-  if (activeTabId.value === id) {
-    activeTabId.value = tabs.value.length ? tabs.value[tabs.value.length - 1].id : null;
+  activePanes.value = activePanes.value.filter((p) => p !== id);
+  if (activePanes.value.length === 0 && tabs.value.length) {
+    activePanes.value = [tabs.value[tabs.value.length - 1].id];
   }
 }
 
@@ -637,10 +769,9 @@ async function deleteHostRow(id: number) {
   await api.deleteHost(id);
   allHosts.value = allHosts.value.filter((h) => h.id !== id);
   tabs.value = tabs.value.filter((t) => t.hostId !== id);
-  if (!tabs.value.some((t) => t.id === activeTabId.value)) {
-    activeTabId.value = tabs.value.length
-      ? tabs.value[tabs.value.length - 1].id
-      : null;
+  activePanes.value = activePanes.value.filter(p => tabs.value.some(t => t.id === p));
+  if (activePanes.value.length === 0 && tabs.value.length) {
+    activePanes.value = [tabs.value[tabs.value.length - 1].id];
   }
   await refreshBrowse();
 }
@@ -693,7 +824,7 @@ async function deleteIdentityRow(id: number) {
           </svg>
         </button>
         <div class="flex items-center gap-2 truncate">
-          <span class="truncate text-sm font-semibold text-white">JDB-NET SSH</span>
+          <span class="truncate text-sm font-semibold text-white">SSH</span>
           <a
             href="https://git.jdbnet.co.uk/jamie/ssh"
             target="_blank"
@@ -705,6 +836,80 @@ async function deleteIdentityRow(id: number) {
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <button
+          v-if="activePanes.length > 1"
+          type="button"
+          class="hidden rounded-lg px-3 py-1.5 text-xs md:inline-flex border transition-colors"
+          :class="broadcastMode ? 'border-accent bg-accent/10 text-accent' : 'border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white'"
+          @click="broadcastMode = !broadcastMode"
+          title="Broadcast input to all visible terminals"
+        >
+          <span class="flex items-center gap-2">
+            <Radio class="h-3.5 w-3.5" />
+            Broadcast
+          </span>
+        </button>
+        <div class="relative hidden md:block">
+          <button
+            ref="snippetsButtonRef"
+            type="button"
+            class="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white inline-flex items-center gap-1"
+            @click="showSnippetsMenu = !showSnippetsMenu"
+          >
+            Snippets
+            <ChevronDown class="h-3 w-3" />
+          </button>
+          <div
+            v-if="showSnippetsMenu"
+            ref="snippetsMenuRef"
+            class="absolute right-0 top-full mt-2 w-64 rounded-xl border border-slate-700 bg-surface shadow-xl z-50 overflow-hidden"
+          >
+            <div class="max-h-64 overflow-y-auto p-1">
+              <div v-if="snippets.length === 0" class="p-3 text-center text-xs text-slate-500">
+                No snippets saved.
+              </div>
+              <div
+                v-for="s in snippets"
+                :key="s.id"
+                class="flex items-center justify-between group rounded-lg px-2 py-1.5 hover:bg-slate-800"
+              >
+                <button
+                  type="button"
+                  class="flex-1 text-left text-sm text-white truncate"
+                  @click="runSnippet(s.command)"
+                  :title="s.command"
+                >
+                  {{ s.label }}
+                </button>
+                <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button type="button" class="text-slate-400 hover:text-white p-1" @click="openEditSnippet(s)">
+                    <Pencil class="h-3 w-3" />
+                  </button>
+                  <button type="button" class="text-red-400 hover:text-red-300 p-1" @click="deleteSnippet(s.id)">
+                    <Trash2 class="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="border-t border-slate-700 p-1">
+              <button
+                type="button"
+                class="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
+                @click="openEditSnippet()"
+              >
+                + Add new snippet...
+              </button>
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="hidden rounded-lg px-3 py-1.5 text-xs md:inline-flex"
+          :class="showSftpPanel ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+          @click="toggleSftp"
+        >
+          SFTP
+        </button>
         <button
           type="button"
           class="hidden rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white md:inline-flex"
@@ -991,13 +1196,19 @@ async function deleteIdentityRow(id: number) {
               v-for="t in tabs"
               :key="t.id"
               type="button"
-              class="flex items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-sm"
-              :class="
-                t.id === activeTabId
+              draggable="true"
+              @dragstart="onTabDragStart(t.id)"
+              @dragover.prevent
+              @drop="onTabDrop(t.id)"
+              @dragend="onTabDragEnd"
+              class="flex items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-sm transition-colors"
+              :class="[
+                activePanes.includes(t.id)
                   ? 'border-slate-700 bg-surface text-white'
-                  : 'border-transparent bg-transparent text-slate-400 hover:text-white'
-              "
-              @click="activeTabId = t.id"
+                  : 'border-transparent bg-transparent text-slate-400 hover:text-white',
+                draggedTabId && draggedTabId !== t.id ? 'hover:bg-slate-800/50' : ''
+              ]"
+              @click="activePanes = [t.id]"
             >
               {{ t.label }}
               <span
@@ -1006,22 +1217,41 @@ async function deleteIdentityRow(id: number) {
               >×</span>
             </button>
           </div>
-          <div class="min-h-0 flex-1 p-2 md:p-3">
+          <div class="relative min-h-0 flex-1 flex flex-row gap-2 p-2 md:p-3">
             <div
               v-for="t in tabs"
-              v-show="t.id === activeTabId"
+              v-show="activePanes.includes(t.id)"
               :key="t.id"
-              class="h-full min-h-0"
+              class="flex-1 min-w-0 h-full"
             >
               <TabContent
+                :ref="(el) => setTabRef(el, t.id)"
                 :host-id="t.hostId"
-                :visible="t.id === activeTabId"
+                :visible="activePanes.includes(t.id)"
+                :show-sftp="showSftpPanel"
+                @broadcast-data="(data: string) => handleBroadcast(data, t.id)"
               />
+            </div>
+            
+            <div 
+              v-if="draggedTabId && activePanes.length === 1 && !activePanes.includes(draggedTabId)"
+              class="absolute inset-y-2 right-2 md:inset-y-3 md:right-3 w-[calc(50%-0.25rem)] z-50 flex items-center justify-center rounded-lg border-2 border-dashed border-accent bg-accent/10 backdrop-blur-[2px] transition-all"
+              @dragover.prevent
+              @drop="onSplitDrop"
+            >
+              <span class="font-medium text-accent">Drop to split side-by-side</span>
             </div>
           </div>
         </template>
       </main>
     </div>
+
+    <SnippetForm
+      v-if="showSnippetForm"
+      :snippet="editingSnippet"
+      @save="saveSnippet"
+      @cancel="showSnippetForm = false"
+    />
 
     <div
       v-if="showApiKeys"

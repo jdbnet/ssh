@@ -188,6 +188,43 @@ export const api = {
     await handle(res);
   },
 
+  async listSnippets(): Promise<SnippetRow[]> {
+    const res = await fetch("/api/snippets", { credentials: "include" });
+    const d = await handle<{ items: SnippetRow[] }>(res);
+    return d.items;
+  },
+
+  async createSnippet(body: Record<string, unknown>): Promise<{ id: number }> {
+    const res = await fetch("/api/snippets", {
+      method: "POST",
+      credentials: "include",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    });
+    return handle(res);
+  },
+
+  async updateSnippet(
+    id: number,
+    body: Partial<{ label: string; command: string }>,
+  ): Promise<void> {
+    const res = await fetch(`/api/snippets/${id}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    });
+    await handle(res);
+  },
+
+  async deleteSnippet(id: number): Promise<void> {
+    const res = await fetch(`/api/snippets/${id}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    await handle(res);
+  },
+
   async listConnectionAudit(limit = 200, daysBack?: number): Promise<ConnectionAuditRow[]> {
     const q = new URLSearchParams({ limit: String(limit) });
     if (daysBack !== undefined) {
@@ -325,6 +362,12 @@ export interface IdentityRow {
   id: number;
   label: string;
   auth_type: string;
+}
+
+export interface SnippetRow {
+  id: number;
+  label: string;
+  command: string;
 }
 
 export interface SftpEntry {
