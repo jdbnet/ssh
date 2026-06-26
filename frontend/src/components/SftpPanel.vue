@@ -11,6 +11,7 @@ const err = ref("");
 const busy = ref(false);
 const renameTarget = ref<SftpEntry | null>(null);
 const newName = ref("");
+const uploadProgress = ref<number | null>(null);
 
 function isDir(m: number): boolean {
   return (m & 0o170000) === 0o040000;
@@ -66,11 +67,16 @@ async function onUpload(ev: Event) {
   input.value = "";
   if (!file) return;
   err.value = "";
+  uploadProgress.value = 0;
   try {
-    await api.sftpUpload(props.connId, path.value, file);
+    await api.sftpUpload(props.connId, path.value, file, (loaded, total) => {
+      uploadProgress.value = Math.round((loaded / total) * 100);
+    });
     await load();
   } catch (e) {
     err.value = e instanceof Error ? e.message : "Upload failed";
+  } finally {
+    uploadProgress.value = null;
   }
 }
 
@@ -186,7 +192,19 @@ function fmtSize(n: number): string {
     </div>
     <div class="min-h-0 flex-1 overflow-auto p-2">
       <p v-if="err" class="mb-2 text-xs text-red-400">{{ err }}</p>
-      <p v-if="busy" class="text-xs text-slate-500">Loading…</p>
+      <div v-if="uploadProgress !== null" class="mb-2 space-y-1">
+        <div class="flex justify-between text-[10px] text-slate-400">
+          <span>Uploading...</span>
+          <span>{{ uploadProgress }}%</span>
+        </div>
+        <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+          <div
+            class="h-full bg-accent transition-all duration-200"
+            :style="{ width: uploadProgress + '%' }"
+          ></div>
+        </div>
+      </div>
+      <p v-else-if="busy" class="text-xs text-slate-500">Loading…</p>
       <ul v-else class="space-y-0.5">
         <li
           v-for="e in entries"

@@ -318,16 +318,41 @@ export const api = {
     await handle(res);
   },
 
-  async sftpUpload(connId: string, path: string, file: File): Promise<void> {
+  async sftpUpload(
+    connId: string,
+    path: string,
+    file: File,
+    onProgress?: (loaded: number, total: number) => void
+  ): Promise<void> {
     const fd = new FormData();
     fd.set("path", path);
     fd.set("file", file);
-    const res = await fetch(`/api/sftp/${connId}/upload`, {
-      method: "POST",
-      credentials: "include",
-      body: fd,
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `/api/sftp/${connId}/upload`);
+      xhr.withCredentials = true;
+      if (onProgress) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            onProgress(e.loaded, e.total);
+          }
+        };
+      }
+      xhr.onload = () => {
+        if (xhr.status === 401) return reject(new Error("unauthorized"));
+        let data: any = {};
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch (e) {}
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+        } else {
+          reject(new Error(data.error || xhr.statusText));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Network Error"));
+      xhr.send(fd);
     });
-    await handle(res);
   },
 
   sftpDownloadUrl(connId: string, path: string): string {
