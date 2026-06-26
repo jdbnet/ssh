@@ -25,6 +25,7 @@ interface TabItem {
 const loggedIn = ref(false);
 const checking = ref(true);
 const appVersion = ref("unknown");
+const auditLogEnabled = ref(true);
 const identities = ref<IdentityRow[]>([]);
 const allHosts = ref<HostRow[]>([]);
 const allFolders = ref<FolderRow[]>([]);
@@ -346,6 +347,9 @@ onMounted(async () => {
     loggedIn.value = m.logged_in;
     if (m.app_version) {
       appVersion.value = m.app_version;
+    }
+    if (m.audit_log_enabled !== undefined) {
+      auditLogEnabled.value = m.audit_log_enabled;
     }
     if (loggedIn.value) await refreshData();
   } catch {
@@ -918,6 +922,7 @@ async function deleteIdentityRow(id: number) {
           API keys
         </button>
         <button
+          v-if="auditLogEnabled"
           type="button"
           class="hidden rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-white md:inline-flex"
           @click="openAuditLog"
