@@ -883,7 +883,13 @@ def _connect_with_jump_chain(host_id: int) -> tuple[paramiko.SSHClient, paramiko
     raise RuntimeError("failed to build jump chain")
 
 
+def is_audit_log_enabled() -> bool:
+    return os.getenv("ENABLE_AUDIT_LOG", "true").lower() in ("1", "true", "yes")
+
+
 def _insert_connection_audit(host_row: dict[str, Any]) -> int | None:
+    if not is_audit_log_enabled():
+        return None
     try:
         with db_cursor() as (_, cur):
             cur.execute(
@@ -964,9 +970,10 @@ def api_logout():
 @app.route("/api/me", methods=["GET"])
 def api_me():
     version = app.config.get("VERSION", "unknown")
+    audit_enabled = is_audit_log_enabled()
     if session.get("logged_in"):
-        return jsonify({"logged_in": True, "app_version": version})
-    return jsonify({"logged_in": False, "app_version": version})
+        return jsonify({"logged_in": True, "app_version": version, "audit_log_enabled": audit_enabled})
+    return jsonify({"logged_in": False, "app_version": version, "audit_log_enabled": audit_enabled})
 
 
 @app.route("/api/identities", methods=["GET"])
