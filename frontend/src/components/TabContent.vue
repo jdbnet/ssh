@@ -6,6 +6,7 @@ import {
   watch,
   nextTick,
 } from "vue";
+import { api } from "@/api";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -32,12 +33,14 @@ defineExpose({
 const termEl = ref<HTMLElement | null>(null);
 const status = ref("Connecting…");
 const connId = ref<string | null>(null);
+const serverBackOnline = ref(false);
 
 let ws: WebSocket | null = null;
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let ro: ResizeObserver | null = null;
 let visibilityHandler: (() => void) | null = null;
+let pingInterval: number | null = null;
 
 function wsUrl(hostId: number): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -85,6 +88,71 @@ function isControlMessage(raw: string): boolean {
   return false;
 }
 
+function connectWs() {
+  serverBackOnline.value = false;
+  if (pingInterval) {
+    clearInterval(pingInterval);
+    pingInterval = null;
+  }
+  if (ws) {
+    ws.close();
+  }
+
+  ws = new WebSocket(wsUrl(props.hostId));
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = () => {
+    status.value = "Handshaking…";
+    sendResize();
+  };
+
+  ws.onmessage = (ev) => {
+    if (!term) return;
+    if (typeof ev.data === "string") {
+      if (isControlMessage(ev.data)) return;
+      term.write(ev.data);
+      return;
+    }
+    const u8 = new Uint8Array(ev.data as ArrayBuffer);
+    term.write(new TextDecoder().decode(u8));
+  };
+
+  ws.onerror = () => {
+    status.value = "WebSocket error";
+  };
+
+  ws.onclose = () => {
+    if (!connId.value) {
+      status.value = "Disconnected";
+    } else {
+      status.value = "Session ended";
+    }
+    
+    pingInterval = window.setInterval(async () => {
+      try {
+        const { up } = await api.pingHost(props.hostId);
+        if (up) {
+          if (pingInterval) {
+            clearInterval(pingInterval);
+            pingInterval = null;
+          }
+          serverBackOnline.value = true;
+        }
+      } catch (err) {
+        // ignore
+      }
+    }, 5000);
+  };
+}
+
+function reconnect() {
+  term?.clear();
+  term?.focus();
+  connId.value = null;
+  status.value = "Connecting…";
+  connectWs();
+}
+
 onMounted(async () => {
   await nextTick();
   if (!termEl.value) return;
@@ -121,36 +189,7 @@ onMounted(async () => {
   ro = new ResizeObserver(() => fitAndResize());
   ro.observe(termEl.value);
 
-  ws = new WebSocket(wsUrl(props.hostId));
-  ws.binaryType = "arraybuffer";
-
-  ws.onopen = () => {
-    status.value = "Handshaking…";
-    sendResize();
-  };
-
-  ws.onmessage = (ev) => {
-    if (!term) return;
-    if (typeof ev.data === "string") {
-      if (isControlMessage(ev.data)) return;
-      term.write(ev.data);
-      return;
-    }
-    const u8 = new Uint8Array(ev.data as ArrayBuffer);
-    term.write(new TextDecoder().decode(u8));
-  };
-
-  ws.onerror = () => {
-    status.value = "WebSocket error";
-  };
-
-  ws.onclose = () => {
-    if (!connId.value) {
-      status.value = "Disconnected";
-    } else {
-      status.value = "Session ended";
-    }
-  };
+  connectWs();
 
   visibilityHandler = () => {
     if (document.visibilityState === "visible") {
@@ -162,6 +201,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (pingInterval) {
+    clearInterval(pingInterval);
+    pingInterval = null;
+  }
   if (visibilityHandler) {
     document.removeEventListener("visibilitychange", visibilityHandler);
     visibilityHandler = null;
@@ -196,6 +239,18 @@ watch(
         class="absolute left-3 top-2 z-10 rounded bg-black/70 px-2 py-1 font-mono text-xs text-amber-200"
       >
         {{ status }}
+      </div>
+      <div
+        v-if="serverBackOnline"
+        class="absolute bottom-4 right-4 z-20 flex items-center gap-3 rounded bg-slate-800 px-4 py-3 text-sm shadow-lg border border-slate-700"
+      >
+        <span class="text-slate-200">Server is back online</span>
+        <button
+          @click="reconnect"
+          class="rounded bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-500 transition-colors"
+        >
+          Reconnect
+        </button>
       </div>
       <div
         ref="termEl"
