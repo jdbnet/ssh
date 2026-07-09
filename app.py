@@ -4,6 +4,7 @@ SSH web client — Flask backend: auth, MariaDB, encrypted identities, WebSocket
 from __future__ import annotations
 
 import os
+import socket
 
 if os.getenv("GEVENT_MONKEY_PATCH", "").lower() in ("1", "true", "yes"):
     from gevent import monkey
@@ -1409,6 +1410,26 @@ def list_hosts():
         cur.execute(_host_select_sql("") + " ORDER BY h.label")
         rows = _serialize_host_rows(cur.fetchall())
     return jsonify({"items": rows})
+
+
+@app.route("/api/hosts/<int:hid>/ping", methods=["GET"])
+@require_auth("read:hosts")
+def ping_host(hid: int):
+    with db_cursor() as (_, cur):
+        cur.execute("SELECT hostname, port FROM ssh_hosts WHERE id = %s", (hid,))
+        row = cur.fetchone()
+    if not row:
+        return jsonify({"error": "not found"}), 404
+    
+    up = False
+    try:
+        with socket.create_connection((row["hostname"], row["port"]), timeout=2.0):
+            up = True
+    except Exception:
+        pass
+
+    return jsonify({"up": up})
+
 
 
 @app.route("/api/tags", methods=["GET"])

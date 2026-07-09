@@ -65,6 +65,11 @@ export const api = {
     return d.items;
   },
 
+  async pingHost(id: number): Promise<{ up: boolean }> {
+    const res = await fetch(`/api/hosts/${id}/ping`, { credentials: "include" });
+    return handle<{ up: boolean }>(res);
+  },
+
   async listTags(): Promise<string[]> {
     const res = await fetch("/api/tags", { credentials: "include" });
     const d = await handle<{ items: string[] }>(res);
